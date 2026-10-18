@@ -1,0 +1,60 @@
+# YOLOv8n-seg stripped down to a single semantic class.
+#
+# Diff against ultralytics' bundled cfg/models/v8/yolov8-seg.yaml:
+#   nc: 80 -> 1          sky is the only class
+#   Segment [nc, 32, 256] -> [nc, 1, 32]
+#
+# The stock head carries 32 mask prototypes and a 256-channel proto conv. For one
+# full-frame region that is dead weight, and worse, the prototype mix
+# (coefficients . protos) plus the resize back to frame resolution happens on CPU
+# *outside* the NPU graph in a normal RKNN deployment. With nm=1 the mix collapses
+# to a single channel, so the proto output is effectively the mask.
+#
+# Measured with model.info():
+#   stock nc=80 nm=32   3.41M params   3.04 GFLOPs @320    12.14 @640
+#   nc=1  nm=32         3.26M params   2.87 GFLOPs @320    11.48 @640
+#   nc=1  nm=1  (here)  3.09M params   2.13 GFLOPs @320     8.53 @640
+#   teacher skyseg      44.0M params  117   GFLOPs @320
+#
+# Backbone and neck are untouched on purpose: they are dense 3x3/1x1 convs, which
+# the RK3588 NPU maps far better than the depthwise convs a MobileNet-style student
+# would use. If nm=1 misbehaves during training, nm=4 is the nearest safe fallback.
+
+nc: 1
+scales:
+  n: [0.33, 0.25, 1024]
+  s: [0.33, 0.50, 1024]
+  m: [0.67, 0.75, 768]
+  l: [1.00, 1.00, 512]
+  x: [1.00, 1.25, 512]
+
+backbone:
+  - [-1, 1, Conv, [64, 3, 2]]
+  - [-1, 1, Conv, [128, 3, 2]]
+  - [-1, 3, C2f, [128, True]]
+  - [-1, 1, Conv, [256, 3, 2]]
+  - [-1, 6, C2f, [256, True]]
+  - [-1, 1, Conv, [512, 3, 2]]
+  - [-1, 6, C2f, [512, True]]
+  - [-1, 1, Conv, [1024, 3, 2]]
+  - [-1, 3, C2f, [1024, True]]
+  - [-1, 1, SPPF, [1024, 5]]
+
+head:
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 6], 1, Concat, [1]]
+  - [-1, 3, C2f, [512]]
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 4], 1, Concat, [1]]
+  - [-1, 3, C2f, [256]]
+
+  - [-1, 1, Conv, [256, 3, 2]]
+  - [[-1, 12], 1, Concat, [1]]
+  - [-1, 3, C2f, [512]]
+
+  - [-1, 1, Conv, [512, 3, 2]]
+  - [[-1, 9], 1, Concat, [1]]
+  - [-1, 3, C2f, [1024]]
+
+  - [[15, 18, 21], 1, Segment, [nc, 1, 32]]

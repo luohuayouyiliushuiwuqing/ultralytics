@@ -1,0 +1,139 @@
+"""Stage 5 -- assemble the trainable YOLO dataset with a leak-free split.
+
+    python sky_workflow/stages/05_build_dataset.py --images input --labels sky_workflow/work/labels
+
+**The split is by contiguous block, never by frame.** These are handheld sweep
+sequences where frame N and frame N+1 are almost the same picture. A random
+per-frame split puts near-duplicates of every training frame into validation, and
+the resulting IoU looks excellent and means nothing -- this is the single easiest
+way to fool yourself on this dataset.
+
+Frames are chunked into blocks of --block within each sequence, and every
+--val-every-th block goes to validation, so validation is made of whole moments in
+time the model has never seen. Because blocks are taken per sequence, all three
+domains stay represented in both splits.
+
+Files are hard-linked, not copied, so the dataset costs no extra disk and cannot
+drift from the source tree -- but it does mean editing dataset/ edits input/.
+"""
+
+import argparse
+import os
+import shutil
+import sys
+from pathlib import Path
+
+import cv2
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from sky_only import EXTENSIONS  # noqa: E402
+
+
+def place(source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists() or target.is_symlink():
+        target.unlink()
+    try:
+        os.link(source, target)
+    except OSError:
+        shutil.copy2(source, target)
+
+
+def main() -> int:
+    here = Path(__file__).resolve().parents[1]
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--images", type=Path, default=Path("input"))
+    parser.add_argument("--labels", type=Path, default=here / "work/labels")
+    parser.add_argument("-o", "--out", type=Path, default=here / "dataset")
+    parser.add_argument("--block", type=int, default=40, help="contiguous frames per split atom")
+    parser.add_argument("--val-every", type=int, default=10, help="every Nth block becomes validation")
+    parser.add_argument("--copy", action="store_true", help="copy instead of hard-linking")
+    args = parser.parse_args()
+
+    excluded = set()
+    exclude_file = here / "work/excluded.txt"
+    if exclude_file.is_file():
+        excluded = {line.strip() for line in exclude_file.read_text(encoding="utf-8").splitlines() if line.strip()}
+
+    # Index by posix path *without* the extension: the image is .png and its label
+    # is .txt, so keys that keep the suffix can never meet. as_posix matters too --
+    # str(Path) yields backslashes on Windows and would not match excluded.txt.
+    labels = {path.relative_to(args.labels).as_posix().rsplit(".", 1)[0]: path
+              for path in sorted(args.labels.rglob("*.txt"))}
+    images = {path.relative_to(args.images).as_posix(): path
+              for path in sorted(args.images.rglob("*"))
+              if path.is_file() and path.suffix.lower() in EXTENSIONS}
+
+    stems = [Path(rel).stem for rel in images]
+    if len(set(stems)) != len(stems):
+        print("image basenames are not unique across sequences -- the flat dataset layout would collide",
+              file=sys.stderr)
+        return 1
+
+    groups = {}
+    for rel in sorted(images):
+        groups.setdefault(Path(rel).parent.name, []).append(rel)
+
+    manifest, dropped = [], 0
+    for group, rels in sorted(groups.items()):
+        for index, rel in enumerate(sorted(rels)):
+            if rel in excluded:
+                dropped += 1
+                continue
+            label = labels.get(rel.rsplit(".", 1)[0])
+            if label is None:
+                print(f"  no label for {rel}")
+                continue
+            block = index // args.block
+            split = "val" if (block % args.val_every) == args.val_every - 1 else "train"
+            manifest.append((rel, Path(rel).stem, group, block, split, label))
+
+    if not manifest:
+        print("nothing to build", file=sys.stderr)
+        return 1
+
+    if args.out.exists():
+        shutil.rmtree(args.out)
+    counts = {"train": 0, "val": 0}
+    for rel, stem, group, block, split, source_label in manifest:
+        source_image = images[rel]
+        image_target = args.out / "images" / split / f"{stem}{source_image.suffix.lower()}"
+        label_target = args.out / "labels" / split / f"{stem}.txt"
+        if args.copy:
+            image_target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_image, image_target)
+            label_target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_label, label_target)
+        else:
+            place(source_image, image_target)
+            place(source_label, label_target)
+        counts[split] += 1
+
+    (args.out / "manifest.csv").write_text(
+        "frame,stem,sequence,block,split\n" + "".join(f"{r[0]},{r[1]},{r[2]},{r[3]},{r[4]}\n" for r in manifest),
+        encoding="utf-8")
+
+    (args.out / "data.yaml").write_text(
+        f"# Generated by stages/05_build_dataset.py -- do not edit by hand.\n"
+        f"# Split is by contiguous {args.block}-frame block, every {args.val_every}th to val.\n"
+        f"path: {args.out.resolve().as_posix()}\n"
+        f"train: images/train\n"
+        f"val: images/val\n"
+        f"nc: 1\n"
+        f"names:\n  0: sky\n", encoding="utf-8")
+
+    total = len(manifest)
+    print(f"dataset -> {args.out}")
+    print(f"  train={counts['train']}  val={counts['val']}  ({counts['val'] / total:.1%} validation)"
+          f"   excluded={dropped}")
+    for group in sorted(groups):
+        rows = [m for m in manifest if m[2] == group]
+        val = sum(1 for m in rows if m[4] == "val")
+        print(f"    sequence {group}: {len(rows)} frames, {val} in val ({val / max(len(rows),1):.1%})")
+    print(f"  data.yaml + manifest.csv written")
+    print("\nNext: stages/08_verify_dataset.py, then 06_train_yolo.py.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
