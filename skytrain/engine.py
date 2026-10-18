@@ -12,6 +12,7 @@ Phase 0 only needs this to (a) run a forward+backward on one batch and
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import sys
 from pathlib import Path
@@ -74,6 +75,78 @@ def evaluate(model, loader, device, frames, prob_dir, thr=0.5):
         eros_sum += er.item()
         n += 1
     return leak_sum / max(n, 1), eros_sum / max(n, 1)
+
+
+@torch.no_grad()
+def eval_checkpoint(arch, ckpt_path, blocks_csv, gamma=GAMMA_DEFAULT,
+                    device=DEVICE, out_csv=None):
+    """Validation gate (EXECUTION_PLAN.md §6.4): per-frame leakage / erosion / F1
+    on the VALIDATION set, computed AFTER bilinear upsample to 640x480.
+
+    Returns an aggregate dict; when out_csv is given, also writes a per-frame CSV.
+    """
+    import torch.nn.functional as F
+
+    model, out_shape = build(arch)
+    sd = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    model.load_state_dict(sd)
+    model = model.to(device).eval()
+
+    _, val_frames = read_splits(blocks_csv)
+    img_dir = args_data_root() / "dataset" / "images"
+    prob_dir = SKY_ROOT.parent / "output" / "teacher_prob16"
+    ds = YSkyDataset(val_frames, training=False, gamma=gamma,
+                     prob_dir=prob_dir, img_dir=img_dir, out_hw=out_shape[2:])
+    loader = DataLoader(ds, batch_size=1, shuffle=False, num_workers=0)
+    H, W = 480, 640
+
+    rows = []
+    leak_sum = eros_sum = f1_sum = 0.0
+    n = 0
+    for i, (x, _, _) in enumerate(loader):
+        x = x.to(device)
+        alpha = torch.sigmoid(model(x))
+        a_up = F.interpolate(alpha, (H, W), mode="bilinear", align_corners=False)
+        stem = val_frames[i]
+        dom = stem.split("_")[0]
+        pp = cv2.imread(str(prob_dir / dom / f"{stem}.png"), cv2.IMREAD_UNCHANGED)
+        true = torch.from_numpy(pp.astype(np.float32) / 65535.0)[None, None]
+        pred_sky = a_up >= 0.5
+        true_sky = true >= 0.5
+        ts = true_sky.float().sum().clamp(min=1.0)
+        tg = (~true_sky).float().sum().clamp(min=1.0)
+        lk = (pred_sky & ~true_sky).float().sum() / tg
+        er = (~pred_sky & true_sky).float().sum() / ts
+        tp = (pred_sky & true_sky).sum().item()
+        fp = (pred_sky & ~true_sky).sum().item()
+        fn = (~pred_sky & true_sky).sum().item()
+        f1 = 2 * tp / (2 * tp + fp + fn + 1e-6)
+        rows.append((stem, lk.item(), er.item(), f1))
+        leak_sum += lk.item()
+        eros_sum += er.item()
+        f1_sum += f1
+        n += 1
+
+    agg = {"arch": arch, "n_val": n,
+           "leakage_mean": leak_sum / max(n, 1),
+           "erosion_mean": eros_sum / max(n, 1),
+           "f1_mean": f1_sum / max(n, 1)}
+    if out_csv:
+        out_csv = Path(out_csv)
+        out_csv.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_csv, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["frame_stem", "leakage", "erosion", "f1"])
+            w.writerows(rows)
+        print(f"[eval] per-frame written -> {out_csv}")
+    print(f"[eval] arch={arch} n={n} leakage={agg['leakage_mean']*100:.3f}% "
+          f"erosion={agg['erosion_mean']*100:.3f}% f1={agg['f1_mean']:.4f}")
+    return agg
+
+
+def args_data_root():
+    """Fallback data root for eval_checkpoint when SKY_ROOT is the default."""
+    return SKY_ROOT
 
 
 def main() -> int:
