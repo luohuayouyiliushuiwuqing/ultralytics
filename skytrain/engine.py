@@ -69,7 +69,7 @@ def evaluate(model, loader, device, frames, prob_dir, thr=0.5):
         stem = frames[i]
         dom = stem.split("_")[0]
         pp = cv2.imread(str(prob_dir / dom / f"{stem}.png"), cv2.IMREAD_UNCHANGED)
-        true = torch.from_numpy(pp.astype(np.float32) / 65535.0)[None, None]
+        true = torch.from_numpy(pp.astype(np.float32) / 65535.0)[None, None].to(a_up.device)
         lk, er = leakage_erosion(a_up, true, thr)
         leak_sum += lk.item()
         eros_sum += er.item()
@@ -110,7 +110,7 @@ def eval_checkpoint(arch, ckpt_path, blocks_csv, gamma=GAMMA_DEFAULT,
         stem = val_frames[i]
         dom = stem.split("_")[0]
         pp = cv2.imread(str(prob_dir / dom / f"{stem}.png"), cv2.IMREAD_UNCHANGED)
-        true = torch.from_numpy(pp.astype(np.float32) / 65535.0)[None, None]
+        true = torch.from_numpy(pp.astype(np.float32) / 65535.0)[None, None].to(a_up.device)
         pred_sky = a_up >= 0.5
         true_sky = true >= 0.5
         ts = true_sky.float().sum().clamp(min=1.0)
