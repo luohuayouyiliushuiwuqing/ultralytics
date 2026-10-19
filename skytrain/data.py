@@ -26,7 +26,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from .config import NET_HW, GAMMA_DEFAULT
+from .config import NET_HW, GAMMA_DEFAULT, IMAGE_EXTS
 
 
 class YSkyDataset(Dataset):
@@ -82,9 +82,12 @@ class YSkyDataset(Dataset):
         stem = self.frames[i]
         image = None
         for sub in ("train", "val"):                      # v4 re-splits merged v3 train/val
-            cand = self.img_dir / sub / f"{stem}.png"
-            if cand.is_file():
-                image = cv2.imread(str(cand))
+            for ext in IMAGE_EXTS:                        # frames ship as .jpg or .png
+                cand = self.img_dir / sub / f"{stem}{ext}"
+                if cand.is_file():
+                    image = cv2.imread(str(cand))
+                    break
+            if image is not None:
                 break
         dom = stem.split("_")[0]                          # '1_000001' -> '1'
         prob = cv2.imread(str(self.prob_dir / dom / f"{stem}.png"), cv2.IMREAD_UNCHANGED)

@@ -28,7 +28,7 @@ from skytrain.arch import build
 from skytrain.data import YSkyDataset
 from skytrain.losses import SkyLoss, leakage_erosion
 from skytrain.splits import read_splits
-from skytrain.config import SKY_ROOT, NET_HW, GAMMA_DEFAULT, EPOCHS, BATCH, DEVICE
+from skytrain.config import SKY_ROOT, BLOCKS_CSV, PROB_DIR, RUNS_DIR, NET_HW, GAMMA_DEFAULT, EPOCHS, BATCH, DEVICE
 
 
 def train_one_epoch(model, loader, opt, loss_fn, device):
@@ -79,7 +79,7 @@ def evaluate(model, loader, device, frames, prob_dir, thr=0.5):
 
 @torch.no_grad()
 def eval_checkpoint(arch, ckpt_path, blocks_csv, gamma=GAMMA_DEFAULT,
-                    device=DEVICE, out_csv=None):
+                    device=DEVICE, out_csv=None, img_dir=None, prob_dir=None):
     """Validation gate (EXECUTION_PLAN.md §6.4): per-frame leakage / erosion / F1
     on the VALIDATION set, computed AFTER bilinear upsample to 640x480.
 
@@ -93,8 +93,8 @@ def eval_checkpoint(arch, ckpt_path, blocks_csv, gamma=GAMMA_DEFAULT,
     model = model.to(device).eval()
 
     _, val_frames = read_splits(blocks_csv)
-    img_dir = args_data_root() / "dataset" / "images"
-    prob_dir = SKY_ROOT.parent / "output" / "teacher_prob16"
+    img_dir = Path(img_dir) if img_dir else SKY_ROOT / "dataset" / "images"
+    prob_dir = Path(prob_dir) if prob_dir else PROB_DIR
     ds = YSkyDataset(val_frames, training=False, gamma=gamma,
                      prob_dir=prob_dir, img_dir=img_dir, out_hw=out_shape[2:])
     loader = DataLoader(ds, batch_size=1, shuffle=False, num_workers=0)
@@ -144,11 +144,6 @@ def eval_checkpoint(arch, ckpt_path, blocks_csv, gamma=GAMMA_DEFAULT,
     return agg
 
 
-def args_data_root():
-    """Fallback data root for eval_checkpoint when SKY_ROOT is the default."""
-    return SKY_ROOT
-
-
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -160,15 +155,13 @@ def main() -> int:
     ap.add_argument("--sweep-gamma", type=str, default="",
                     help="comma list, e.g. 1.0,1.3,1.6,2.0 (Phase 1)")
     ap.add_argument("--data-root", type=Path, default=SKY_ROOT)
-    ap.add_argument("--blocks-csv", type=Path,
-                    default=SKY_ROOT.parent / "output" / "split" / "blocks.csv")
-    ap.add_argument("--prob-dir", type=Path,
-                    default=SKY_ROOT.parent / "output" / "teacher_prob16")
+    ap.add_argument("--blocks-csv", type=Path, default=BLOCKS_CSV)
+    ap.add_argument("--prob-dir", type=Path, default=PROB_DIR)
     ap.add_argument("--limit", type=int, default=0,
                     help="0 = full; N = use first N training frames (smoke check)")
     ap.add_argument("--smoke", action="store_true",
                     help="one batch forward+backward, then exit (Phase 0 gate)")
-    ap.add_argument("--project", type=Path, default=SKY_ROOT.parent / "runs")
+    ap.add_argument("--project", type=Path, default=RUNS_DIR)
     args = ap.parse_args()
 
     if not args.blocks_csv.is_file():
