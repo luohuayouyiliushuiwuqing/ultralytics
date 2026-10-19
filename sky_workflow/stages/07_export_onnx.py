@@ -33,7 +33,7 @@ import torch
 import torch.nn as nn
 
 HERE = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sky_only import EXTENSIONS  # noqa: E402
 
 

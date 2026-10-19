@@ -29,8 +29,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from sky_only import EXTENSIONS, IMG_MEAN, IMG_STD, NET_SIZE, make_session  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from sky_only import EXTENSIONS, IMG_MEAN, IMG_STD, NET_SIZE, Progress, ensure_teacher, make_session  # noqa: E402
 
 
 def probability(session, image: np.ndarray) -> np.ndarray:
@@ -54,8 +54,13 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=0)
     args = parser.parse_args()
 
+    try:
+        args.model = ensure_teacher(args.model)
+    except Exception as error:  # offline or blocked: say so plainly instead of a stack trace
+        print(f"could not obtain teacher {args.model}: {type(error).__name__}: {error}", file=sys.stderr)
+        return 1
     if not args.model.is_file():
-        print(f"missing teacher {args.model} -- see sky_workflow/README.md", file=sys.stderr)
+        print(f"missing teacher {args.model}", file=sys.stderr)
         return 1
 
     files = sorted(p for p in args.input.rglob("*") if p.suffix.lower() in EXTENSIONS)
@@ -68,12 +73,16 @@ def main() -> int:
     session = make_session(args.model, args.device)
     root = args.input
     started = time.perf_counter()
+    progress = Progress(len(files), label="  teacher", unit=" frames")
+    sky_mean = 0.0
     for count, path in enumerate(files, 1):
         image = cv2.imdecode(np.fromfile(str(path), dtype=np.uint8), cv2.IMREAD_COLOR)
         if image is None:
             print(f"  skip unreadable {path}")
             continue
         prob = probability(session, image)
+        sky_mean += prob.mean()
+        progress.update(count)
         rel = path.relative_to(root)
         mask_target = args.out / rel.with_suffix(".png")
         mask_target.parent.mkdir(parents=True, exist_ok=True)
@@ -82,11 +91,10 @@ def main() -> int:
             prob_target = args.prob / rel.with_suffix(".npy")
             prob_target.parent.mkdir(parents=True, exist_ok=True)
             np.save(prob_target, prob.astype(np.float32))
-        if count % 200 == 0 or count == len(files):
-            rate = count / (time.perf_counter() - started)
-            print(f"  {count}/{len(files)}  {rate:.1f} img/s  sky={prob.mean():.1%}")
-
-    print(f"{args.out}  ({len(files)} masks, device={getattr(session, 'device', 'onnxruntime CPU')})")
+    progress.close()
+    rate = len(files) / max(time.perf_counter() - started, 1e-6)
+    print(f"{args.out}  ({len(files)} masks, device={getattr(session, 'device', 'onnxruntime CPU')}, "
+          f"{rate:.1f} img/s, mean sky={sky_mean / max(count, 1):.1%})")
     return 0
 
 

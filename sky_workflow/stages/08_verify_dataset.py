@@ -25,7 +25,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sky_only import EXTENSIONS  # noqa: E402
 
 
@@ -65,7 +65,11 @@ def main() -> int:
     for row in rows:
         image_path = args.dataset / "images" / row["split"] / f"{row['stem']}{Path(row['frame']).suffix}"
         label_path = args.dataset / "labels" / row["split"] / f"{row['stem']}.txt"
-        mask_path = args.masks / row["frame"]
+        # Stage 1 writes .png masks while manifest["frame"] keeps the source suffix
+        # (i.e. .jpg), so prefer the .png name and fall back to the frame name.
+        mask_path = args.masks / Path(row["frame"]).with_suffix(".png")
+        if not mask_path.is_file():
+            mask_path = args.masks / row["frame"]
         if not image_path.is_file() or not label_path.is_file():
             missing += 1
             continue

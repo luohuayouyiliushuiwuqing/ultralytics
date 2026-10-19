@@ -208,3 +208,5 @@ results.csv
 fuzz-sources/
 fuzz-datasets/
 fuzz-models/
+
+sky_workflow/work
