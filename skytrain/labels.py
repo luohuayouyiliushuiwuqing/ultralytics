@@ -25,16 +25,18 @@ def npy_to_png16(src: Path, dst: Path) -> None:
 
 
 def convert_tree(npy_root: Path, out_root: Path) -> int:
-    """Walk {domain}/*.npy under npy_root, emit 16-bit PNGs under out_root."""
+    """Walk *.npy under npy_root, emitting 16-bit PNGs under out_root/<domain>/.
+
+    Accepts both the v3 `{domain}/*.npy` layout and a flat directory of .npy files;
+    for a flat directory the domain is the stem prefix before the first underscore.
+    """
     npy_root, out_root = Path(npy_root), Path(out_root)
     count = 0
-    for dom in sorted(npy_root.iterdir()):
-        if not dom.is_dir():
-            continue
-        for npy in sorted(dom.glob("*.npy")):
-            dst = out_root / dom.name / (npy.stem + ".png")
-            npy_to_png16(npy, dst)
-            count += 1
+    for npy in sorted(npy_root.rglob("*.npy")):
+        dom = npy.parent.name if npy.parent != npy_root else npy.stem.split("_")[0]
+        dst = out_root / dom / (npy.stem + ".png")
+        npy_to_png16(npy, dst)
+        count += 1
     return count
 
 
@@ -49,10 +51,10 @@ def load_png16(path: Path) -> np.ndarray:
 
 def main() -> int:
     import argparse
-    from .config import SKY_ROOT
+    from .config import PROB_NPY_DIR, PROB_DIR
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--npy-dir", type=Path, default=SKY_ROOT / "work" / "prob")
-    ap.add_argument("--out", type=Path, default=SKY_ROOT.parent / "output" / "teacher_prob16")
+    ap.add_argument("--npy-dir", type=Path, default=PROB_NPY_DIR)
+    ap.add_argument("--out", type=Path, default=PROB_DIR)
     ap.add_argument("--limit", type=int, default=0, help="0 = all frames")
     args = ap.parse_args()
     # convert_tree walks all domains; limit applies per domain roughly

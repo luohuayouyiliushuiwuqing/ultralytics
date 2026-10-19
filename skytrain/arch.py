@@ -90,7 +90,15 @@ def build(name: str):
     """Return (model, output_shape) for a candidate arch."""
     name = name.upper()
     if name == "C1":
-        return SkyHead(), (1, 1, 72, 96)
+        # SkyHead consumes (p3, p4, p5), not the input tensor, so returning it as a
+        # standalone model makes engine's `model(x)` call fail with a TypeError. The
+        # YOLOv8n backbone+neck that produces those features is not wired here, so
+        # C1 fails loudly rather than crashing mid-training. Use SkyHead directly
+        # (see tests/test_skytrain_sanity.py), or run C2/C3 end to end.
+        raise NotImplementedError(
+            "C1 needs the YOLOv8n backbone+neck to feed SkyHead (p3, p4, p5); it is not "
+            "wired in this checkout. Use --arch C2 or --arch C3, or call SkyHead directly."
+        )
     if name == "C2":
         return TinyNet(ch=(16, 32, 64), dw=False), (1, 1, 144, 192)
     if name == "C3":
