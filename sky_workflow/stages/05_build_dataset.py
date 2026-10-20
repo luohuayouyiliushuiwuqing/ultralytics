@@ -48,12 +48,17 @@ def main() -> int:
     parser.add_argument("--block", type=int, default=40, help="contiguous frames per split atom")
     parser.add_argument("--val-every", type=int, default=10, help="every Nth block becomes validation")
     parser.add_argument("--copy", action="store_true", help="copy instead of hard-linking")
+    parser.add_argument("--excluded", type=Path, default=None,
+                        help="exclusion list written by stage 1 --review (default: sibling of --labels)")
     args = parser.parse_args()
 
+    # Compare by stem: stage 1 --review records stems, and frames/labels carry
+    # different suffixes, so suffix-agnostic matching is what actually lines up.
     excluded = set()
-    exclude_file = here / "work/excluded.txt"
+    exclude_file = args.excluded or (args.labels.parent / "excluded.txt")
     if exclude_file.is_file():
-        excluded = {line.strip() for line in exclude_file.read_text(encoding="utf-8").splitlines() if line.strip()}
+        excluded = {Path(line.strip()).stem
+                    for line in exclude_file.read_text(encoding="utf-8").splitlines() if line.strip()}
 
     # Index by posix path *without* the extension: the image is .png and its label
     # is .txt, so keys that keep the suffix can never meet. as_posix matters too --
@@ -77,7 +82,7 @@ def main() -> int:
     manifest, dropped = [], 0
     for group, rels in sorted(groups.items()):
         for index, rel in enumerate(sorted(rels)):
-            if rel in excluded:
+            if Path(rel).stem in excluded:
                 dropped += 1
                 continue
             label = labels.get(rel.rsplit(".", 1)[0])
@@ -108,6 +113,15 @@ def main() -> int:
             place(source_image, image_target)
             place(source_label, label_target)
         counts[split] += 1
+
+    # A dataset missing either split trains but cannot be validated (or vice versa),
+    # and that failure only shows up later. Block/val-every decide the ratio, so with
+    # few frames the defaults can leave a split empty -- say so instead of shipping it.
+    if not counts["train"] or not counts["val"]:
+        print(f"empty split: train={counts['train']} val={counts['val']} -- "
+              f"lower --block or --val-every for {len(manifest)} frames "
+              f"(a dataset needs both splits)", file=sys.stderr)
+        return 1
 
     (args.out / "manifest.csv").write_text(
         "frame,stem,sequence,block,split\n" + "".join(f"{r[0]},{r[1]},{r[2]},{r[3]},{r[4]}\n" for r in manifest),

@@ -34,9 +34,10 @@ from sky_only import EXTENSIONS  # noqa: E402
 
 
 def load_excluded(path: Path) -> set:
+    """Read the exclusion list as stems, so entries match whatever suffix they carry."""
     if not path.is_file():
         return set()
-    names = {line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()}
+    names = {Path(line.strip()).stem for line in path.read_text(encoding="utf-8").splitlines() if line.strip()}
     print(f"excluded by {path}: {len(names)} frames")
     return names
 
@@ -85,9 +86,11 @@ def main() -> int:
     parser.add_argument("--max-points", type=int, default=120)
     parser.add_argument("--min-area", type=int, default=200, help="ignore sky components smaller than this")
     parser.add_argument("--stats", type=Path, default=here / "work/polygon_stats.csv")
+    parser.add_argument("--excluded", type=Path, default=None,
+                        help="exclusion list written by stage 1 --review (default: sibling of --masks)")
     args = parser.parse_args()
 
-    excluded = load_excluded(here / "work/excluded.txt")
+    excluded = load_excluded(args.excluded or (args.masks.parent / "excluded.txt"))
     masks = sorted(p for p in args.masks.rglob("*.png") if p.is_file())
     if not masks:
         print(f"no masks under {args.masks}", file=sys.stderr)
@@ -98,12 +101,12 @@ def main() -> int:
         rel = mask_path.relative_to(args.masks)
         # as_posix, not str(): excluded.txt is written with forward slashes and
         # str(Path) yields backslashes on Windows, which silently matches nothing.
-        key = rel.as_posix()
+        key = Path(rel).stem
         image_path = args.images / rel.with_suffix(".png")
         if not image_path.is_file():
             matches = [args.images / rel.parent / f"{rel.stem}{ext}" for ext in EXTENSIONS]
             image_path = next((m for m in matches if m.is_file()), image_path)
-        if key in excluded or key.replace(".png", "") in excluded:
+        if key in excluded:
             skipped += 1
             continue
         image = cv2.imdecode(np.fromfile(str(image_path), dtype=np.uint8), cv2.IMREAD_COLOR)

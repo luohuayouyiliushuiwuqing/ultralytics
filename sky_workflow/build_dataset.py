@@ -93,6 +93,9 @@ def main() -> int:
     prob = work / "prob"
     mask_clean = work / "mask_clean"
     labels = work / "labels"
+    # One list shared by stage 01 (--review writes it), 04 and 05 (they skip what is
+    # on it), so a manual cleaning decision flows through the whole pipeline.
+    excluded = work / "excluded.txt"
 
     stage = ["--limit", args.limit] if args.limit else []
 
@@ -100,7 +103,8 @@ def main() -> int:
     if not args.skip_teacher:
         steps.append(("01 teacher masks", "01_label_teacher",
                       [images, "-o", mask, "--prob", prob, "-m", args.model,
-                       "-t", args.threshold, "--device", args.device, *stage]))
+                       "-t", args.threshold, "--device", args.device,
+                       "--excluded", excluded, *stage]))
     steps.append(("02 clean masks", "02_clean_labels",
                   [mask, "-o", mask_clean, "--min-area", args.clean_min_area]))
     if args.qc:
@@ -110,9 +114,10 @@ def main() -> int:
     steps.append(("04 masks -> YOLO polygons", "04_masks_to_yolo",
                   ["--images", images, "--masks", mask_clean, "-o", labels,
                    "--epsilon", args.epsilon, "--max-points", args.max_points,
-                   "--stats", work / "polygon_stats.csv"]))
+                   "--excluded", excluded, "--stats", work / "polygon_stats.csv"]))
     steps.append(("05 assemble dataset", "05_build_dataset",
                   ["--images", images, "--labels", labels, "-o", out,
+                   "--excluded", excluded,
                    "--block", args.block, "--val-every", args.val_every]))
     steps.append(("08 verify round-trip", "08_verify_dataset",
                   ["--dataset", out, "--masks", mask_clean, "--sheet", work / "verify_worst.png"]))
