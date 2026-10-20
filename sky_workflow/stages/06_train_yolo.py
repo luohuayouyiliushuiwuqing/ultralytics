@@ -39,7 +39,7 @@ def main() -> int:
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--imgsz", type=int, default=320)
     parser.add_argument("--batch", type=int, default=16)
-    parser.add_argument("--device", default="xpu", help="xpu / cpu / mps / 0")
+    parser.add_argument("--device", default="cpu", help="xpu / cpu / mps / 0")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--pretrained", default="yolov8n-seg.pt", help="'none' trains from scratch")
     parser.add_argument("--max-det", type=int, default=300,
