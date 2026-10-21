@@ -56,19 +56,14 @@ import cv2
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from sky_only import EXTENSIONS, IMG_MEAN, IMG_STD, NET_SIZE, Progress, ensure_teacher, make_session  # noqa: E402
-
-# Sky tint for the review overlay: warm so it reads against grass and concrete.
-SKY_TINT = (255, 150, 40)
-
-
-def probability(session, image: np.ndarray) -> np.ndarray:
-    """Sky probability in [0, 1], resampled back to the frame's own resolution."""
-    height, width = image.shape[:2]
-    rgb = cv2.cvtColor(cv2.resize(image, (NET_SIZE, NET_SIZE)), cv2.COLOR_BGR2RGB)
-    blob = ((rgb.astype(np.float32) / 255.0 - IMG_MEAN) / IMG_STD).transpose(2, 0, 1)
-    raw = session.run(None, {session.get_inputs()[0].name: np.ascontiguousarray(blob[None])})[0]
-    return cv2.resize(raw[0, 0], (width, height), interpolation=cv2.INTER_LINEAR)
+from sky_only import (  # noqa: E402
+    EXTENSIONS,
+    Progress,
+    ensure_teacher,
+    make_session,
+    overlay,
+    probability,
+)
 
 
 # ---- review branch ---------------------------------------------------------
@@ -85,15 +80,6 @@ def save_excluded(path: Path, stems: set) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(f"{stem}\n" for stem in sorted(stems)), encoding="utf-8")
-
-
-def overlay(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
-    """Tint the sky region so the boundary is visible at thumbnail size."""
-    vis = image.copy()
-    sky = mask > 127
-    tint = np.array(SKY_TINT, dtype=np.float32)
-    vis[sky] = (vis[sky].astype(np.float32) * 0.5 + tint * 0.5).astype(np.uint8)
-    return vis
 
 
 def compose(image: np.ndarray, mask: np.ndarray | None, lines: list, pane_width: int = 640):

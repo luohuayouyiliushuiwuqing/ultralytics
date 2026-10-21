@@ -210,3 +210,4 @@ fuzz-datasets/
 fuzz-models/
 
 sky_workflow/work
+nohup.out

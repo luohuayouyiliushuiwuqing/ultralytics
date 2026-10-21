@@ -1,0 +1,55 @@
+# Simplification A -- narrower network (width 0.25 -> 0.1875).
+#
+# Diff against yolov8n-sky1-seg.yaml:
+#   scales n: [0.33, 0.25, 1024] -> [0.33, 0.1875, 1024]
+#
+# Why: sky is ONE large, independent, connected region. 80-class detection needs
+# enough feature capacity to separate 80 categories; a single class does not, so
+# most of the width is spare capacity. This is the lowest-risk cut -- it is a pure
+# width scaling, no structural change, so max box size, strides and the mask
+# prototype path are all untouched.
+#
+# Measured (imgsz=320, hook-counted conv MACs x2):
+#   base  width 0.25    3.088M params   2.108 GFLOPs
+#   here  width 0.1875  1.844M params   1.328 GFLOPs     (-40% params, -37% FLOPs)
+#
+# Untouched on purpose: backbone/neck topology (dense 3x3/1x1 convs map far better
+# on the RK3588 NPU than depthwise convs), nc=1, nm=1.
+#
+# NOTE: changing `npr` (the 3rd Segment arg) does nothing at n scale -- it is
+# multiplied by width and rounded up to a multiple of 8, so 32/16/8 all become 8.
+
+nc: 1
+scales:
+  n: [0.33, 0.1875, 1024]
+
+backbone:
+  - [-1, 1, Conv, [64, 3, 2]]
+  - [-1, 1, Conv, [128, 3, 2]]
+  - [-1, 3, C2f, [128, True]]
+  - [-1, 1, Conv, [256, 3, 2]]
+  - [-1, 6, C2f, [256, True]]
+  - [-1, 1, Conv, [512, 3, 2]]
+  - [-1, 6, C2f, [512, True]]
+  - [-1, 1, Conv, [1024, 3, 2]]
+  - [-1, 3, C2f, [1024, True]]
+  - [-1, 1, SPPF, [1024, 5]]
+
+head:
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 6], 1, Concat, [1]]
+  - [-1, 3, C2f, [512]]
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 4], 1, Concat, [1]]
+  - [-1, 3, C2f, [256]]
+
+  - [-1, 1, Conv, [256, 3, 2]]
+  - [[-1, 12], 1, Concat, [1]]
+  - [-1, 3, C2f, [512]]
+
+  - [-1, 1, Conv, [512, 3, 2]]
+  - [[-1, 9], 1, Concat, [1]]
+  - [-1, 3, C2f, [1024]]
+
+  - [[15, 18, 21], 1, Segment, [nc, 1, 32]]

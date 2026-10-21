@@ -1,0 +1,57 @@
+# Simplification B -- drop the stride-32 (P5) branch.
+#
+# Diff against yolov8n-sky1-seg.yaml:
+#   removed the last three head layers (Conv[512,3,2], Concat[[-1,9]], C2f[1024])
+#   Segment input [15, 18, 21] -> [15, 18]
+#
+# Why: sky is ONE large region, so the coarse branch that exists to give the
+# biggest receptive field looks like the most droppable part. It is also the
+# heaviest in parameters (1024 channels) while being the cheapest in FLOPs
+# (small spatial size), so this cut helps weight size and memory more than speed.
+#
+# Measured (imgsz=320, hook-counted conv MACs x2):
+#   base  3 levels   3.088M params   2.108 GFLOPs
+#   here  2 levels   2.035M params   1.897 GFLOPs     (-34% params, -10% FLOPs)
+#
+# !!! READ BEFORE TRAINING AT 640 !!!
+# DFL caps the regressable distance at (reg_max-1) stride units, so the largest
+# box a level can predict is 30 x stride pixels:
+#     P3 stride  8 ->  240 px      P4 stride 16 -> 480 px      P5 stride 32 -> 960 px
+# Dropping P5 caps boxes at 480 px. That is fine at imgsz=320 (frame is 320 wide)
+# but NOT at imgsz=640, where a full-frame sky box (~640 px) exceeds it and gets
+# clipped, which will truncate the box and therefore the mask crop.
+# => test this variant at 320 only, or keep P5 for 640.
+#
+# P3 is deliberately kept: the mask prototype is built from ch[0] (P3), so
+# removing the finest level would directly degrade mask resolution.
+
+nc: 1
+scales:
+  n: [0.33, 0.25, 1024]
+
+backbone:
+  - [-1, 1, Conv, [64, 3, 2]]
+  - [-1, 1, Conv, [128, 3, 2]]
+  - [-1, 3, C2f, [128, True]]
+  - [-1, 1, Conv, [256, 3, 2]]
+  - [-1, 6, C2f, [256, True]]
+  - [-1, 1, Conv, [512, 3, 2]]
+  - [-1, 6, C2f, [512, True]]
+  - [-1, 1, Conv, [1024, 3, 2]]
+  - [-1, 3, C2f, [1024, True]]
+  - [-1, 1, SPPF, [1024, 5]]
+
+head:
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 6], 1, Concat, [1]]
+  - [-1, 3, C2f, [512]]
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 4], 1, Concat, [1]]
+  - [-1, 3, C2f, [256]]
+
+  - [-1, 1, Conv, [256, 3, 2]]
+  - [[-1, 12], 1, Concat, [1]]
+  - [-1, 3, C2f, [512]]
+
+  - [[15, 18], 1, Segment, [nc, 1, 32]]

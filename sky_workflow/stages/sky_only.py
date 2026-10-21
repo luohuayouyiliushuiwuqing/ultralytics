@@ -9,10 +9,13 @@ provided here. Replace with the v3 original if/when it becomes available.
 
 from __future__ import annotations
 
+import argparse
 import sys
-import numpy as np
 import urllib.request
 from pathlib import Path
+
+import cv2
+import numpy as np
 
 # Image extensions accepted as sources across the pipeline.
 EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
@@ -72,6 +75,43 @@ class Progress:
 IMG_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 IMG_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 NET_SIZE = 320
+
+# Default teacher location and the tint used when drawing the sky region.
+DEFAULT_TEACHER = Path(__file__).resolve().parent.parent / "models" / "skyseg_teacher.onnx"
+# OpenCV is BGR, so this is magenta. Deliberately a colour the scene itself does not
+# contain: a blue tint would melt into the sky it is marking, and green into the grass.
+SKY_TINT = (255, 60, 255)
+
+
+def probability(session, image: np.ndarray) -> np.ndarray:
+    """Sky probability in [0, 1], resampled back to the frame's own resolution.
+
+    Two things fail silently if you get them wrong: the teacher needs ImageNet
+    normalization (plain /255 returns garbage that still looks like a plausible
+    mask), and it is fixed at NET_SIZE, so a non-square frame is squashed before
+    inference and stretched back afterwards.
+    """
+    height, width = image.shape[:2]
+    rgb = cv2.cvtColor(cv2.resize(image, (NET_SIZE, NET_SIZE)), cv2.COLOR_BGR2RGB)
+    blob = ((rgb.astype(np.float32) / 255.0 - IMG_MEAN) / IMG_STD).transpose(2, 0, 1)
+    raw = session.run(None, {session.get_inputs()[0].name: np.ascontiguousarray(blob[None])})[0]
+    return cv2.resize(raw[0, 0], (width, height), interpolation=cv2.INTER_LINEAR)
+
+
+def overlay(image: np.ndarray, mask: np.ndarray, alpha: float = 0.5) -> np.ndarray:
+    """Tint the sky region so its boundary is visible at thumbnail size."""
+    vis = image.copy()
+    sky = mask > 127
+    tint = np.array(SKY_TINT, dtype=np.float32)
+    vis[sky] = (vis[sky].astype(np.float32) * (1.0 - alpha) + tint * alpha).astype(np.uint8)
+    return vis
+
+
+def write_image(path: Path, image: np.ndarray) -> None:
+    """Write an image, tolerating non-ASCII paths (cv2.imwrite fails on some)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(cv2.imencode(path.suffix or ".png", image)[1].tobytes())
 
 
 def ensure_teacher(path: str | Path, urls: tuple = TEACHER_URLS) -> Path:
@@ -165,3 +205,71 @@ def make_session(model: str | Path, device: str = "auto"):
         import onnxruntime as ort
 
         return ort.InferenceSession(model, providers=["CPUExecutionProvider"])
+
+
+def main() -> int:
+    """Run the teacher on one frame and write the original, its mask, and an overlay.
+
+        python sky_workflow/stages/sky_only.py datasets/images/d3_1015_001.jpg
+
+    Writes three files into --out (default: the current directory, deliberately NOT
+    next to the source frame, which must stay untouched):
+        <stem>_orig.<ext>    the source frame, byte for byte
+        <stem>_mask.png      binary sky mask (255 = sky, 0 = ground)
+        <stem>_overlay.png   the frame with the sky region tinted
+
+    Useful for checking the teacher on a frame before committing a whole labeling
+    pass to it.
+    """
+    parser = argparse.ArgumentParser(
+        description="Run the sky teacher on one frame: original + mask + overlay.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("image", type=Path, help="frame to inspect")
+    parser.add_argument("-o", "--out", type=Path, default=None,
+                        help="output directory (default: current directory)")
+    parser.add_argument("-m", "--model", type=Path, default=DEFAULT_TEACHER)
+    parser.add_argument("-t", "--threshold", type=float, default=0.5, help="probability -> sky")
+    parser.add_argument("--device", default="cpu", help="cpu / auto / GPU / NPU")
+    parser.add_argument("--alpha", type=float, default=0.5, help="overlay tint strength 0..1")
+    args = parser.parse_args()
+
+    if not args.image.is_file():
+        print(f"no image at {args.image}", file=sys.stderr)
+        return 1
+    image = cv2.imdecode(np.fromfile(str(args.image), dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        print(f"unreadable image: {args.image}", file=sys.stderr)
+        return 1
+
+    try:
+        model = ensure_teacher(args.model)
+    except Exception as error:  # offline or blocked: say so plainly, no stack trace
+        print(f"could not obtain teacher {args.model}: {type(error).__name__}: {error}", file=sys.stderr)
+        return 1
+
+    session = make_session(model, args.device)
+    prob = probability(session, image)
+    mask = (prob >= args.threshold).astype(np.uint8) * 255
+
+    out = args.out or Path.cwd()
+    out.mkdir(parents=True, exist_ok=True)
+    stem = args.image.stem
+    original = out / f"{stem}_orig{args.image.suffix.lower()}"
+    original.write_bytes(args.image.read_bytes())  # exact copy, no re-encode
+    mask_path = out / f"{stem}_mask.png"
+    overlay_path = out / f"{stem}_overlay.png"
+    write_image(mask_path, mask)
+    write_image(overlay_path, overlay(image, mask, args.alpha))
+
+    print(f"{args.image.name}  {image.shape[1]}x{image.shape[0]}  "
+          f"sky={float(prob.mean()):.1%}  (threshold {args.threshold}, "
+          f"{getattr(session, 'device', 'onnxruntime CPU')})")
+    print(f"  original -> {original}")
+    print(f"  mask     -> {mask_path}")
+    print(f"  overlay  -> {overlay_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
