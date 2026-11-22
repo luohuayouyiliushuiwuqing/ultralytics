@@ -151,7 +151,7 @@ The `colormap` argument accepts any [OpenCV colormap](https://docs.opencv.org/4.
 
 ## How Heatmaps Work
 
-The [Heatmap solution](../reference/solutions/heatmap.md) extends the [ObjectCounter](../reference/solutions/object_counter.md) class. On the first processed frame it creates a blank intensity layer matching the frame size. Each frame is then processed in two steps:
+The [Heatmap solution](../reference/solutions/heatmap.md) extends the [ObjectCounter](../reference/solutions/object_counter.md) class. On the first processed frame it creates a blank intensity layer matching the frame size, and it starts a fresh layer whenever the frame size changes rather than rescaling the activity accumulated so far. Each frame is then processed in two steps:
 
 1. YOLO26 tracking detects and follows every object in the frame
 2. For each tracked object, the heatmap intensity increases within a circular region centered in its bounding box
@@ -199,6 +199,6 @@ cap.release()
 cv2.destroyAllWindows()
 ```
 
-### What makes Ultralytics YOLO26 heatmaps different from other data visualization tools like those from [OpenCV](https://www.ultralytics.com/glossary/opencv) or Matplotlib?
+### What makes Ultralytics YOLO26 heatmaps different from other data visualization tools like those from OpenCV or Matplotlib?
 
-Ultralytics YOLO26 heatmaps integrate [object detection](https://www.ultralytics.com/glossary/object-detection), tracking, intensity accumulation, and overlay rendering into a single call, while generic tools like OpenCV or Matplotlib require you to build that pipeline yourself. The solution processes video streams in real time and supports persistent tracking and customizable colormaps out of the box. For details on the underlying model, see the [YOLO26 model page](../models/yolo26.md).
+Ultralytics YOLO26 heatmaps integrate [object detection](https://www.ultralytics.com/glossary/object-detection), tracking, intensity accumulation, and overlay rendering into a single call, while generic tools like [OpenCV](https://www.ultralytics.com/glossary/opencv) or Matplotlib require you to build that pipeline yourself. The solution processes video streams in real time and supports persistent tracking and customizable colormaps out of the box.

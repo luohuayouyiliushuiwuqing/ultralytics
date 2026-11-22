@@ -2,13 +2,13 @@
 plans: [free, pro, enterprise]
 title: Cloud Model Training
 comments: true
-description: Learn about model training in Ultralytics Platform including project organization, cloud training, and real-time metrics streaming.
+description: Model training on Ultralytics Platform. Organize projects, train YOLO models on cloud GPUs or your own hardware, monitor live metrics, and export results.
 keywords: Ultralytics Platform, model training, cloud training, YOLO, GPU training, machine learning, deep learning
 ---
 
 # Model Training
 
-[Ultralytics Platform](https://platform.ultralytics.com) provides comprehensive tools for [training YOLO models](../../modes/train.md), from organizing experiments to running cloud training jobs with real-time metrics streaming.
+[Ultralytics Platform](https://platform.ultralytics.com) provides tools for [training YOLO models](../../modes/train.md), from organizing experiments to [running cloud training jobs](https://www.ultralytics.com/blog/train-yolo-models-faster-with-ultralytics-platform) with real-time metrics streaming.
 
 <p align="center">
   <br>
@@ -29,7 +29,7 @@ The Training section helps you:
 - **Train** on cloud GPUs with a single click
 - **Monitor** real-time metrics during training
 - **Compare** model performance across experiments
-- **Export** to 22 deployment formats (see [supported formats](models.md#supported-formats))
+- **Export** to 24 deployment formats (see [supported formats](models.md#supported-formats))
 
 ![Ultralytics Platform Train Overview](https://cdn.ul.run/i/19e52629fb54e22f8a73cd7e1bb3ea76.avif)<!-- screenshot -->
 
@@ -49,7 +49,7 @@ flowchart TD
 | **Configure** | Select [dataset](../data/datasets.md), base model, and training parameters |
 | **Train**     | Run on cloud GPUs or your local hardware                                   |
 | **Monitor**   | View real-time loss curves and metrics                                     |
-| **Export**    | Convert to 22 deployment formats ([details](models.md#supported-formats))  |
+| **Export**    | Convert to 24 deployment formats ([details](models.md#supported-formats))  |
 
 ## Training Options
 
@@ -83,34 +83,14 @@ Available GPUs for cloud training on Ultralytics Cloud:
 
 ## Real-Time Metrics
 
-During training, view live metrics across three subtabs:
+On the model's **Train** tab, view live metrics and available validation results:
 
-```mermaid
-flowchart TD
-    subgraph charts["Charts"]
-        direction TB
-        A[Losses]
-        B[Task metrics]
-    end
-    subgraph console["Console"]
-        direction TB
-        C[Live logs]
-        D[Error detection]
-    end
-    subgraph system["System"]
-        direction TB
-        E[GPU stats]
-        F["CPU, RAM, I/O"]
-    end
-    charts ~~~ console
-    console ~~~ system
-```
-
-| Subtab      | Metrics                                                                                          |
-| ----------- | ------------------------------------------------------------------------------------------------ |
-| **Charts**  | Task metrics (mAP50, mAP50-95, precision, recall for detection), train/val losses, learning rate |
-| **Console** | Live training logs with ANSI color and automatic error detection                                 |
-| **System**  | GPU utilization, GPU memory and temperature, CPU, RAM, network and disk I/O                      |
+| Subtab         | Metrics                                                                                                                                                                                      |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Metrics**    | Task metrics (mAP<sub>50</sub>, mAP<sub>50-95</sub>, precision, recall for detection), train/val losses, learning rate, and the first three training batch images when the run uploaded them |
+| **Validation** | Recorded validation plots and per-image analysis, when available                                                                                                                             |
+| **Console**    | Live training logs with ANSI color and automatic error detection                                                                                                                             |
+| **System**     | GPU utilization, GPU memory and temperature, CPU, RAM, network and disk I/O                                                                                                                  |
 
 !!! info "Automatic Checkpoints"
 
@@ -171,7 +151,7 @@ Training time depends on:
 
 The current estimator predicts about 6 minutes for 1000 images, YOLO26n, 100 epochs on RTX PRO 6000, and about 2
 minutes for 500 images, YOLO26n, 50 epochs on RTX 4090. Actual duration varies; use the live estimate in the training
-dialog for the selected dataset and configuration. See [cost examples](cloud-training.md#cost-examples).
+dialog for the selected dataset and configuration.
 
 ### Can I train multiple models simultaneously?
 

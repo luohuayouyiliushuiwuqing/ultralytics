@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import inspect
 from collections.abc import Iterator
 from pathlib import Path
@@ -11,8 +12,9 @@ import numpy as np
 import torch
 from PIL import Image
 
-from ultralytics.cfg import QUANTIZE_ALIASES, TASK2DATA, _handle_deprecation, get_cfg, get_save_dir
+from ultralytics.cfg import QUANTIZE_ALIASES, TASK2DATA, _handle_deprecation, get_cfg
 from ultralytics.engine.results import Results
+from ultralytics.nn.backends.base import BaseBackend
 from ultralytics.nn.tasks import BaseModel, guess_model_task, load_checkpoint, yaml_model_load
 from ultralytics.utils import (
     ARGV,
@@ -132,7 +134,7 @@ class Model(torch.nn.Module):
 
         # Load or create new YOLO model
         __import__("os").environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"  # to avoid deterministic warnings
-        if str(model).endswith((".yaml", ".yml")):
+        if str(model).lower().endswith((".yaml", ".yml")):
             self._new(model, task=task, verbose=verbose)
         else:
             self._load(model, task=task)
@@ -249,7 +251,7 @@ class Model(torch.nn.Module):
             weights = checks.check_file(weights, download_dir=SETTINGS["weights_dir"])  # download and return local file
         weights = checks.check_model_file_from_stem(weights)  # add suffix, i.e. yolo26n -> yolo26n.pt
 
-        if str(weights).rpartition(".")[-1] == "pt":
+        if str(weights).rpartition(".")[-1].lower() == "pt":
             self.model, self.ckpt = load_checkpoint(weights)
             self.task = self.model.task
             self.overrides = self.model.args = self._reset_ckpt_args(self.model.args)
@@ -259,7 +261,9 @@ class Model(torch.nn.Module):
             self.model, self.ckpt = weights, None
             self.task = task or guess_model_task(weights)
             self.ckpt_path = weights
-        self.overrides["model"] = model_uri if str(model_uri).startswith("ul://") else weights
+            if imgsz := BaseBackend.read_metadata(weights).get("imgsz"):  # default to export imgsz like .pt train imgsz
+                self.overrides["imgsz"] = max(ast.literal_eval(str(imgsz)))
+        self.overrides["model"] = model_uri if str(model_uri).lower().startswith("ul://") else weights
         self.overrides["task"] = self.task
         self.model_name = weights
 
@@ -279,7 +283,7 @@ class Model(torch.nn.Module):
             >>> model = Model("yolo26n.onnx")
             >>> model._check_is_pytorch_model()  # Raises TypeError
         """
-        pt_str = isinstance(self.model, (str, Path)) and str(self.model).rpartition(".")[-1] == "pt"
+        pt_str = isinstance(self.model, (str, Path)) and str(self.model).rpartition(".")[-1].lower() == "pt"
         pt_module = isinstance(self.model, torch.nn.Module)
         if not (pt_module or pt_str):
             raise TypeError(
@@ -442,8 +446,7 @@ class Model(torch.nn.Module):
             >>> # Model is now fused and ready for optimized inference
         """
         self._check_is_pytorch_model()
-        # DistillationModel fuses to its student, so adopt the return
-        self.model = self.model.fuse(verbose=verbose, imgsz=imgsz)
+        self.model.fuse(verbose=verbose, imgsz=imgsz)
         self.predictor = None
         return self
 
@@ -543,29 +546,27 @@ class Model(torch.nn.Module):
         args = {**self.overrides, **custom, **kwargs}  # highest priority args on the right
         args["quantize"] = QUANTIZE_ALIASES.get(str(q := args.get("quantize")).lower(), q)  # unset quantize is FP32
 
+        current = self.predictor  # this call's predictor, whatever a concurrent call assigns to self.predictor
         if (
-            not self.predictor
-            or (predictor and type(self.predictor) is not predictor)
-            or any(getattr(self.predictor.args, k) != args[k] for k in PREDICTOR_SETUP_KEYS if k in args)
+            not current
+            or (predictor and type(current) is not predictor)
+            or any(getattr(current.args, k) != args[k] for k in PREDICTOR_SETUP_KEYS if k in args)
         ):
-            self.predictor = (predictor or self._smart_load("predictor"))(overrides=args, _callbacks=self.callbacks)
-            self.predictor.setup_model(model=self.model, verbose=is_cli)
-        else:  # only update args if predictor is already setup
-            save_keys = ("project", "name", "save_dir", "exist_ok")
-            prev_save_args = tuple(getattr(self.predictor.args, k, None) for k in save_keys)
+            current = (predictor or self._smart_load("predictor"))(overrides=args, _callbacks=self.callbacks)
+            current.setup_model(model=self.model, verbose=is_cli)
+            self.predictor, cfg = current, current.args
+        else:  # the predictor applies cfg under its lock, so concurrent calls never run with each other's args
             base_args = {
                 **DEFAULT_CFG_DICT,
                 **self.overrides,
-                **{k: getattr(self.predictor.args, k) for k in PREDICTOR_SETUP_KEYS},
+                **{k: getattr(current.args, k) for k in PREDICTOR_SETUP_KEYS},
             }
-            self.predictor.args = get_cfg(base_args, {**custom, **kwargs})
-            if self.predictor.args.show:
-                self.predictor.args.show = checks.check_imshow(warn=True)
-            if prev_save_args != tuple(getattr(self.predictor.args, k, None) for k in save_keys):
-                self.predictor.save_dir = get_save_dir(self.predictor.args)
-        if prompts and hasattr(self.predictor, "set_prompts"):  # for SAM-type models
-            self.predictor.set_prompts(prompts)
-        return self.predictor.predict_cli(source=source) if is_cli else self.predictor(source=source, stream=stream)
+            cfg = get_cfg(base_args, {**custom, **kwargs})
+            cfg.show = cfg.show and checks.check_imshow(warn=True)
+        cfg.prompts = prompts or {}  # FastSAM reads these per-call args, which its predictor applies under its lock
+        if prompts and hasattr(current, "set_prompts"):  # for SAM-type models
+            current.set_prompts(prompts)
+        return current.predict_cli(source, cfg=cfg) if is_cli else current(source=source, stream=stream, cfg=cfg)
 
     def track(
         self,
@@ -647,11 +648,11 @@ class Model(torch.nn.Module):
         return validator.metrics
 
     def calibrate(self, data: str | Path, **kwargs: Any):
-        """Fit scale-only depth calibration on a small labeled set (depth task only).
+        """Select the depth scale calibration on a small labeled set (depth task only).
 
         Runs a validation pass, then fits the global log-affine ``d' = exp(a·log d + b)`` against
         ground-truth depth via :func:`fit_calibration_selective` — the same "calibrate only if it
-        helps" policy as trainer auto-calibration (identity / scale-only chosen by held-out δ1) —
+        helps" policy as trainer auto-calibration (identity / current / scale-only chosen by held-out δ1) —
         which writes ``(a, b)`` into the head's ``cal_a``/``cal_b`` buffers. No gradient training
         and the decoder weights are untouched, so it cannot degrade the relative depth structure.
         Call ``model.save(...)`` afterwards to persist the calibration.
@@ -661,7 +662,7 @@ class Model(torch.nn.Module):
             **kwargs (Any): Extra validation arguments (e.g. ``imgsz``, ``batch``, ``device``, ``split``).
 
         Returns:
-            (tuple | None): The fitted ``(a, b)``, or ``None`` if fewer than 2 images had valid depth pixels.
+            (tuple | None): The selected ``(a, b)``, or ``None`` if fewer than 2 images had valid depth pixels.
 
         Raises:
             TypeError: If the model is not a PyTorch model.
@@ -708,7 +709,8 @@ class Model(torch.nn.Module):
                 - imgsz (int | list[int]): Image size for benchmarking.
                 - quantize (int | str): Requested precision: 16 (FP16), 8 (INT8), or 32/None (FP32) where
                   supported; only 16 changes the native PyTorch row, and only off CPU.
-                - device (str): Device to run the benchmark on (e.g., 'cpu', 'cuda').
+                - device (str): Device to run the benchmark on (e.g., 'cpu', 'cuda'), or 'xpu' and 'npu' for
+                  the Intel GPU and NPU with format='openvino' or 'litert'.
 
         Returns:
             (polars.DataFrame): A Polars DataFrame with benchmark results for each format, including file size, metric,
@@ -801,7 +803,8 @@ class Model(torch.nn.Module):
             format_name = dict(zip(formats["Argument"], formats["Format"])).get(
                 str(export_format).lower(), export_format
             )
-            LOGGER.info(f"Export to {format_name} in the cloud with Ultralytics Platform: {PLATFORM_URL}")
+            if format_name != "ST Edge AI":  # the one export format Ultralytics Platform does not offer
+                LOGGER.info(f"Export to {format_name} in the cloud with Ultralytics Platform: {PLATFORM_URL}")
             raise
 
     def train(
@@ -834,8 +837,8 @@ class Model(torch.nn.Module):
         Returns:
             (ultralytics.utils.metrics.DetMetrics | dict | None): Training metrics if available and training is
                 successful; otherwise, None. The specific metrics type depends on the task. When `data` is a list or
-                tuple of datasets, the base model is fine-tuned on each in series and a {dataset: metrics} dict is
-                returned.
+                tuple of datasets, the base model is fine-tuned on each in series and a {dataset: metrics} dict
+                is returned.
 
         Raises:
             TypeError: If the model is not a PyTorch model.
@@ -1003,8 +1006,9 @@ class Model(torch.nn.Module):
         """Retrieve the class names associated with the loaded model.
 
         This property returns the class names if they are defined in the model. It checks the class names for validity
-        using the 'check_class_names' function from the ultralytics.nn.autobackend module. If the predictor is not
-        initialized, it sets it up before retrieving the names.
+        using the 'check_class_names' function from the ultralytics.nn.autobackend module. Exported models return the
+        names embedded in their metadata without loading an inference backend, and the predictor is set up only for
+        exports that carry none.
 
         Returns:
             (dict[int, str]): A dictionary of class names associated with the model, where keys are class indices and
@@ -1023,6 +1027,8 @@ class Model(torch.nn.Module):
         if hasattr(self.model, "names"):
             return check_class_names(self.model.names)
         if not self.predictor:  # export formats will not have predictor defined until predict() is called
+            if names := BaseBackend.read_metadata(self.model).get("names"):  # embedded at export, no backend needed
+                return check_class_names(ast.literal_eval(str(names)))
             predictor = self._smart_load("predictor")(overrides=self.overrides, _callbacks=self.callbacks)
             predictor.setup_model(model=self.model, verbose=False)  # do not mess with self.predictor.model args
             return predictor.model.names

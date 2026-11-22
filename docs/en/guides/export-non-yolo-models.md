@@ -1,5 +1,5 @@
 ---
-title: Export Any PyTorch Model to ONNX & More
+title: Export PyTorch Models to ONNX & More
 comments: true
 description: Export any PyTorch model (timm, torchvision, or custom) to ONNX, OpenVINO, CoreML, TensorFlow, and more through one Ultralytics API, with no per-backend code.
 keywords: export PyTorch model, convert PyTorch to ONNX, PyTorch to CoreML, PyTorch to OpenVINO, PyTorch to TensorFlow, non-YOLO export, timm export, torchvision export, TorchScript export, NCNN export, MNN export, PaddlePaddle export, ExecuTorch export, Core AI export, LiteRT export, Ultralytics export utilities, torch.nn.Module export, model conversion, model deployment, PyTorch deployment
@@ -9,13 +9,13 @@ keywords: export PyTorch model, convert PyTorch to ONNX, PyTorch to CoreML, PyTo
 
 Ultralytics ships standalone export utilities under [`ultralytics.utils.export`](../reference/utils/export/engine.md) that wrap multiple backends behind one consistent interface. You can export any `torch.nn.Module`, including [timm](https://github.com/huggingface/pytorch-image-models) image models, [torchvision](https://docs.pytorch.org/vision/) classifiers and detectors, or your own custom architectures, to [TorchScript](../integrations/torchscript.md), [ONNX](../integrations/onnx.md), [OpenVINO](../integrations/openvino.md), [CoreML](../integrations/coreml.md), [Core AI](../integrations/coreai.md), [TensorFlow SavedModel](../integrations/tf-savedmodel.md), [TensorFlow Frozen Graph](../integrations/tf-graphdef.md), [PaddlePaddle](../integrations/paddlepaddle.md), [MNN](../integrations/mnn.md), [NCNN](../integrations/ncnn.md), and [ExecuTorch](../integrations/executorch.md) without learning each backend separately.
 
-Deploying PyTorch models to production usually means juggling a different exporter for every target: `torch.onnx.export` for ONNX, `coremltools` for Apple devices, `onnx2tf` for TensorFlow, `pnnx` for NCNN, and so on. Each tool has its own API, dependency quirks, and output conventions. These utilities collapse that into a single calling pattern.
+[Deploying PyTorch models to production](https://www.ultralytics.com/glossary/model-deployment) usually means juggling a different exporter for every target: `torch.onnx.export` for ONNX, `coremltools` for Apple devices, `onnx2tf` for TensorFlow, `pnnx` for NCNN, and so on. Each tool has its own API, dependency quirks, and output conventions. These utilities collapse that into a single calling pattern.
 
 ## Why Use Ultralytics for Non-YOLO Export?
 
 - **One API across 11 formats:** learn a single calling convention instead of a dozen.
 - **Same code path as YOLO exports:** the same helpers power every Ultralytics YOLO export.
-- **FP16 and INT8 quantization** through one `quantize` argument for formats that support it.
+- **FP16 and INT8 [quantization](https://www.ultralytics.com/glossary/model-quantization)** through one `quantize` argument for formats that support it.
 - **Works on CPU:** no GPU required for the export step itself, so you can run it locally on a laptop; CoreML export is not supported on Windows, and Core AI export needs macOS 26 or later on Apple silicon, or x86_64 Linux with glibc 2.34 or newer, with Python 3.11 to 3.14.
 
 ## Quick Start
@@ -45,7 +45,7 @@ The `torch2*` functions take a standard `torch.nn.Module` and an example input t
 | Core AI         | [`torch2coreai()`](../reference/utils/export/coreai.md)           | `pip install coreai-torch` (Apple silicon macOS 26+, x86_64 Linux glibc 2.34+; Python 3.11-3.14) | `.aimodel` directory           |
 | TF SavedModel   | [`onnx2saved_model()`](../reference/utils/export/tensorflow.md)   | [see detailed requirements below](#export-to-tensorflow-savedmodel)                              | `_saved_model/` directory      |
 | TF Frozen Graph | [`keras2pb()`](../reference/utils/export/tensorflow.md)           | [see detailed requirements below](#export-to-tensorflow-savedmodel)                              | `.pb` file                     |
-| PaddlePaddle    | [`torch2paddle()`](../reference/utils/export/paddle.md)           | `pip install paddlepaddle x2paddle`                                                              | `_paddle_model/` directory     |
+| PaddlePaddle    | [`torch2paddle()`](../reference/utils/export/paddle.md)           | `pip install paddlepaddle x2paddle six`                                                          | `_paddle_model/` directory     |
 | MNN             | [`onnx2mnn()`](../reference/utils/export/mnn.md)                  | `pip install MNN`                                                                                | `.mnn` file                    |
 | NCNN            | [`torch2ncnn()`](../reference/utils/export/ncnn.md)               | `pip install ncnn pnnx`                                                                          | `_ncnn_model/` directory       |
 | ExecuTorch      | [`torch2executorch()`](../reference/utils/export/executorch.md)   | `pip install executorch`                                                                         | `_executorch_model/` directory |
@@ -181,8 +181,7 @@ Pass `quantize=8` to add an INT8 `.tflite` alongside them.
 
 TensorFlow export does not run on macOS with Python 3.13 or newer; use Python 3.12 or earlier on macOS, or Linux.
 
-Requirements on Python 3.12 or earlier (on Python 3.13 or newer the export requires `tensorflow>2.19.0`, `tf_keras>2.19.0`,
-`onnx2tf>=2.3.0,<2.3.16`, and `protobuf>=6.31.1,<7.0.0` instead):
+Requirements on Python 3.12 or earlier (on Python 3.13 or newer the export requires `tensorflow>2.19.0`, `tf_keras>2.19.0`, and `protobuf>=6.31.1,<7.0.0` instead):
 
 - `tensorflow>=2.0.0,<=2.19.0`
 - `onnx2tf>=1.26.3,<1.29.0`
@@ -255,11 +254,11 @@ resnet18_paddle_model/
 └── x2paddle_code.py
 ```
 
-Requires `x2paddle` and the correct PaddlePaddle distribution for your platform:
+Requires `x2paddle`, `six`, and a PaddlePaddle build, which is installed automatically if missing:
 
-- `paddlepaddle-gpu>=3.0.0,<3.3.0` on CUDA
-- `paddlepaddle==3.0.0` on ARM64 CPU
-- `paddlepaddle>=3.0.0,<3.3.0` on other CPUs
+- `paddlepaddle==3.0.0` on ARM64
+- `paddlepaddle>=3.0.0,<3.3.0` on other platforms, including CUDA machines; conversion does not need a GPU build
+- An installed `paddlepaddle-gpu>=3.0.0` from [PaddlePaddle's package index](https://www.paddlepaddle.org.cn/en/install/quick) is used instead. GPU builds are not on PyPI, so a GPU build older than 3.0.0 raises an error rather than being replaced by the CPU build.
 
 Not supported on NVIDIA Jetson.
 
@@ -278,7 +277,7 @@ resnet18_executorch_model/
 └── model.pte
 ```
 
-Requires `torch>=2.9.0` and a matching ExecuTorch runtime (`pip install executorch`). For runtime usage, see the [ExecuTorch integration](../integrations/executorch.md).
+Requires `torch>=2.9.0` and a matching ExecuTorch runtime (`pip install executorch`). Pass the model and input on CPU, because capture on other devices writes a wrong `.pte` or crashes. For runtime usage, see the [ExecuTorch integration](../integrations/executorch.md).
 
 ## Verify Your Exported Model
 
@@ -347,7 +346,7 @@ For raw tensors without Ultralytics [preprocessing](https://www.ultralytics.com/
 Three things the `YOLO()` route handles for you and a direct call does not:
 
 - **Input layout**: `CoreMLBackend` and `TensorFlowBackend` expect BHWC. Transpose first with `im.permute(0, 2, 3, 1)`; a BCHW tensor raises a shape mismatch.
-- **Autograd**: wrap calls in `torch.inference_mode()`. `TorchScriptBackend` returns a tensor that still carries a [gradient](https://www.ultralytics.com/glossary/gradient-descent) graph.
+- **Autograd**: wrap calls in `torch.inference_mode()`. `TorchScriptBackend` returns a tensor that still carries a gradient graph.
 - **Post-processing**: without metadata a backend leaves `task` as `None` and `names` empty. `LiteRTBackend` still denormalizes any 3-D output by image size on the assumption it holds YOLO boxes, which is wrong for a non-YOLO model with a 3-D output. Two-dimensional outputs such as classifier logits are unaffected.
 
 ## Known Limitations

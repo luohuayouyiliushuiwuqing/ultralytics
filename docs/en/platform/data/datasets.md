@@ -2,13 +2,13 @@
 plans: [free, pro, enterprise]
 title: Dataset Management
 comments: true
-description: Learn how to upload, manage, and organize datasets in Ultralytics Platform for YOLO model training with automatic processing and statistics.
+description: Upload, browse, version, and export computer vision datasets in Ultralytics Platform, with YOLO, COCO, NDJSON, and video import and automatic statistics.
 keywords: Ultralytics Platform, datasets, dataset management, dataset versioning, YOLO, data upload, training data, computer vision, machine learning
 ---
 
 # Datasets
 
-[Ultralytics Platform](https://platform.ultralytics.com) datasets provide a streamlined solution for managing your training data. After upload, the platform processes images, labels, and statistics automatically.
+[Ultralytics Platform](https://platform.ultralytics.com) datasets hold the images, labels, and splits that make up your [training data](https://www.ultralytics.com/glossary/training-data). After upload, the platform processes images, labels, and statistics automatically.
 
 A dataset is ready to train once processing has completed and it has at least one image in the `train` split, at least one image in either the `val` or `test` split, and at least one labeled image. The dataset header shows a `Ready` badge when all three conditions are met, and a `Not Ready` badge otherwise — click the badge to see exactly which condition is missing.
 
@@ -18,11 +18,11 @@ Use [Agents](../agents.md#collect-images-for-review) to add images to a dataset 
 
 ## Upload Dataset
 
-Ultralytics Platform accepts multiple upload formats for flexibility.
+Ultralytics Platform accepts images, videos, archives, and NDJSON files.
 
 !!! tip "Already have data elsewhere?"
 
-    If you already have datasets in [Roboflow](../integrations/roboflow.md), use [Integrations](../integrations/index.md) to import them directly — no manual export or re-upload needed. Data in [Google Cloud Storage](../integrations/google-cloud-storage.md), [Amazon S3](../integrations/amazon-s3.md), or [Azure Blob Storage](../integrations/azure-blob-storage.md) can be used in place through **Cloud storage**. Enterprise workspaces can use [On Premise](../integrations/on-premise.md) to index and train on local data without sending pixels to Platform.
+    If you already have datasets in [Roboflow](../integrations/roboflow.md) or hosted [Label Studio](../integrations/label-studio.md), use [Integrations](../integrations/index.md) to import them directly — no manual export or re-upload needed. Data in [Google Cloud Storage](../integrations/google-cloud-storage.md), [Amazon S3](../integrations/amazon-s3.md), or [Azure Blob Storage](../integrations/azure-blob-storage.md) can be used in place through **Cloud storage**. Enterprise workspaces can use [On Premise](../integrations/on-premise.md) to index and train on local data without sending pixels to Platform.
 
 ### Supported Formats
 
@@ -117,7 +117,6 @@ The Platform supports [Ultralytics YOLO](../../datasets/detect/index.md#ultralyt
 
     ```yaml
     # data.yaml
-    path: .
     train: images/train
     val: images/val
 
@@ -266,7 +265,7 @@ To create a dataset:
 5. Select the task type (see [supported tasks](index.md#supported-tasks)), an optional license (see [available licenses](#available-licenses)), and visibility (public or private). A new public dataset starts with **CC BY 4.0** selected; pick another license or **None** to change it
 6. Click `Create & Upload` for local files, `Create & Import` for a URL or connected source, or `Create Dataset` to start empty
 
-![Ultralytics Platform Datasets Upload Dialog Task Selector](https://cdn.ul.run/i/16dcaac210f7f70540f6061c6b98fba9.avif)<!-- screenshot -->
+![Ultralytics Platform Datasets Upload Dialog Task Selector](https://cdn.ul.run/i/2d90456710a8b99b2fb2b85b54642fb7.avif)<!-- screenshot -->
 
 To add files to an existing dataset, open its dataset page and either drag the files onto the gallery or click the upload icon in the page header. The upload icon opens your browser's native file picker directly because the dataset task is already defined.
 
@@ -289,7 +288,7 @@ Depth datasets can only be created from **Upload** or **URL**; the **Cloud** and
 
 #### Before the Upload Starts
 
-Platform validates your files in the browser before uploading anything, so common problems surface immediately rather than after a long transfer. Archives are checked for corruption, emptiness, password protection, and YAML syntax errors, and oversized files are listed by name.
+Platform validates your files in the browser before uploading anything, so common problems surface immediately rather than after a long transfer. Archives are checked for corruption, emptiness, password protection, and YAML syntax errors, and oversized files are listed by name. A ZIP cut short by an interrupted download or copy has no end-of-archive record, so it stops with **Unable to read ZIP file** before any bytes upload; download or copy it again. URL imports can't be checked in the browser, so an incomplete ZIP at a link fails during processing with **Unable to read this archive**.
 
 Two dialogs may then appear:
 
@@ -319,16 +318,16 @@ flowchart TD
 ```
 
 1. **Validation**: Format and size checks
-2. **Normalization**: Large images resized (max 4096px, min dimension 28px), grayscale expanded to RGB, transparency flattened onto white, and EXIF orientation applied; TIFF originals are stored as uploaded
+2. **Normalization**: Large images resized (max 4096px, min dimension 28px), grayscale expanded to RGB, transparency flattened onto white, and EXIF orientation applied; TIFF originals are stored as uploaded unless training needs them converted (see Stored Image Encoding below)
 3. **Thumbnails**: 256px WebP previews generated
 4. **Label Parsing**: [YOLO](../../datasets/detect/index.md#ultralytics-yolo-format), COCO, [LabelMe](../integrations/labelme.md), and [Ultralytics](../../datasets/detect/index.md#ultralytics-ndjson-format) or [Labelbox](../integrations/labelbox.md) NDJSON labels extracted
 5. **Statistics**: Class distributions and image dimensions computed
 
 !!! info "Stored Image Encoding"
 
-    TIFF originals are always stored byte-for-byte, and AVIF and WebP originals are when no resize or color change is needed. Everything else is re-encoded — WebP sources stay WebP, and all other sources (JPEG, PNG, BMP, HEIC, JP2, DNG, MPO, and resized or color-changed AVIF) become JPEG at quality 92. Your original filename and source extension are retained as metadata.
+    TIFF originals are stored byte-for-byte, except multi-band floating-point TIFFs in datasets of up to 3 channels, which training cannot read: they keep their first three bands, are scaled to 8-bit, and are re-encoded. AVIF and WebP originals are stored byte-for-byte when no resize or color change is needed. Everything else is re-encoded — WebP sources stay WebP, and all other sources (JPEG, PNG, BMP, HEIC, JP2, DNG, MPO, converted TIFF, and resized or color-changed AVIF) become JPEG at quality 92. Your original filename and source extension are retained as metadata.
 
-![Ultralytics Platform Datasets Upload Progress Bar](https://cdn.ul.run/i/5ed3a283c82984bbc109ac647d26f73f.avif)<!-- screenshot -->
+![Ultralytics Platform Datasets Upload Progress Bar](https://cdn.ul.run/i/17de3eb93ee619a53dbaad3c3a73f6f4.avif)<!-- screenshot -->
 
 ??? tip "Validate Before Upload"
 
@@ -342,7 +341,7 @@ flowchart TD
 
 !!! warning "Image Size Requirements"
 
-    Images must be at least 28px on their shortest side. Images smaller than this are rejected during processing. Images larger than 4096px on their longest side are automatically resized with aspect ratio preserved, except TIFF originals, which are stored as uploaded.
+    Images must be at least 28px on their shortest side. Images smaller than this are rejected during processing. Images larger than 4096px on their longest side are automatically resized with aspect ratio preserved, except TIFF originals kept byte-for-byte (see Stored Image Encoding above).
 
 ## Browse Images
 
@@ -401,28 +400,30 @@ Images can be sorted and filtered for efficient browsing:
 
     Results are ordered by relevance: images whose filename, class, or metadata match come first, then up to 1,000 more
     images that look like the search, such as `forklift near a doorway`. Sorting is unavailable while a search is
-    active, and a search that ends in a file extension skips the look-alike matches.
+    active. A search that ends in a file extension skips the look-alike matches, and one that ends in an image file
+    extension, such as `img_0042.jpg`, matches filenames only.
 
 ### Fullscreen Viewer
 
 Click any image to open the fullscreen viewer with:
 
 - **Navigation**: Arrow keys or thumbnail previews to browse
-- **Image information**: Review Platform-generated properties, custom metadata, and embedded file metadata such as EXIF
+- **Image information**: Review Platform-generated properties, custom metadata, and embedded file metadata such as EXIF. An image added from another dataset (with [Find Similar](#find-similar-images), [Copy or Move](#copy-and-move-images), or [Clone](#clone-dataset)) or from [Generate Similar](#generate-similar-images) also shows where it came from: **Source method**, **Source dataset** (**Unavailable** when that dataset is deleted or not visible to you), **Source model** for generated images, **Source license** at import, and **Imported by** for members of the dataset's workspace. Platform records only the latest import, and plain uploads and images added before it began recording sources in November 2026 show none
 - **Custom metadata**: Owners and editors can add or replace a JSON object, including nested values up to 500,000 serialized characters and top-level keys up to 128 characters
 - **Annotations**: Toggle annotation overlay visibility
 - **Class Breakdown**: Per-class label counts with color indicators
 - **Annotate**: When you have edit access, annotation controls are active immediately when the fullscreen viewer opens on desktop
 - **Blur faces**: Right-click the image or an annotation to [preview and apply face blurring](#blur-faces) to the image when available
-- **Download**: Download the original image file
-- **Delete**: Delete the image from the dataset
+- **Rotate**: With edit access, press `R` or use the rotate button to turn the image and its annotations 90° clockwise. Platform keeps the image as first stored and renders each turn from it, so repeated turns do not degrade the image and turning back to upright restores the original. Rotation is not available for depth datasets, multispectral datasets, images stored as TIFF, or cloud storage and On Premise datasets
+- **Download**: Download the full-size image file, turned as displayed if you rotated it
+- **Delete**: Permanently delete the image from the dataset after you confirm
 - **Zoom**: `Cmd/Ctrl+Scroll`, `Cmd/Ctrl++`, or `Cmd/Ctrl+=` to zoom in, and `Cmd/Ctrl+-` to zoom out
 - **Reset view**: `Cmd/Ctrl + 0` or the reset button to fit the image to the viewer
 - **Pan**: Hold `Space` and drag, or drag with the middle mouse button, to pan the canvas at any zoom level
 - **Pixel view**: Toggle pixelated rendering for close inspection
 - **Depth curtain**: On depth datasets, a draggable divider wipes between the RGB image and its colorized depth map
 
-![Ultralytics Platform Datasets Fullscreen Viewer With Metadata Panel](https://cdn.ul.run/i/fdda4f9080025d94e4fe07f1e45590bf.avif)<!-- screenshot -->
+![Ultralytics Platform Datasets Fullscreen Viewer With Metadata Panel](https://cdn.ul.run/i/e468cbb1faf97aa8518846788e435894.avif)<!-- screenshot -->
 
 ### Filter by Split
 
@@ -452,7 +453,7 @@ Analysis runs in the background in two stages, `Computing embeddings` and `Clust
 
 !!! note "Analysis Requirements"
 
-    A dataset needs at least 20 and at most 200,000 non-errored images to analyze. [Connected datasets](../integrations/index.md) backed by cloud or On Premise storage are not supported yet.
+    A dataset needs at least 20 and at most 200,000 non-errored images to analyze. Cloud storage datasets need [AI features](../integrations/index.md#ai-features) on, and On Premise datasets are not supported.
 
 ### Visualization
 
@@ -503,19 +504,25 @@ Navigate large scatters directly from your mouse and keyboard, or with the zoom 
 
 If your dataset changes after analysis — new images arrive, or the analyzed count no longer matches the dataset — or the analysis predates the **Clusters** color option, a `Re-analyze` button appears at the top of the panel for owners and editors.
 
-Click `Re-analyze` to recompute embeddings and the 2D projection from scratch.
+Click `Re-analyze` to recompute [embeddings](https://www.ultralytics.com/glossary/embeddings) and the 2D projection from scratch.
 
 ### Find Similar Images
 
-The same embeddings power similarity search across public datasets and your own and team datasets. In a dataset you can edit, right-click an image in **Grid** or **Compact** view (or a single selected row in **Table** view) and choose **Find similar images**. The dialog shows the source image beside up to 24 of the nearest images, each labeled with its similarity score, excluding images your dataset already holds and copies of the selected image in other datasets. Click an image to preview it full size and see its source dataset, license, and similarity score. Select images with their checkboxes (or select all), then click **Add N to dataset**: they are added to the `train` split as unlabeled images, counted against your storage, and ready for [annotation](annotation.md).
+The same embeddings power similarity search across public datasets and your own and team datasets. In a dataset you can edit, right-click an image in **Grid** or **Compact** view (or a single selected row in **Table** view) and choose **Find similar images**. The dialog shows the source image beside up to 24 of the nearest images, each labeled with its similarity score, excluding your dataset and any dataset that holds a copy of the selected image. Switches under the source image narrow the search, and each change runs a new search, so a narrower one still returns up to 24 images:
 
-![Ultralytics Platform Datasets Find Similar Images Dialog](https://cdn.ul.run/i/004538a8ce286784bffe8a0e3fd1a3f3.avif)<!-- screenshot -->
+- **Commercial**: Datasets under any license in [Available Licenses](#available-licenses) except those with `NC` in their identifier, `Research-Only`, `Other`, and `None`
+- **Research and community**: Datasets under a license with `NC` in its identifier, `Research-Only`, or `Other`, and datasets with no license (`None`)
+- **Your images**: Your own and team datasets; turn it off to search public datasets alone
 
-An image without an embedding — in a dataset not yet analyzed, or added since the last analysis — is embedded when you open the dialog, so you do not need to run a [Clustering](#clustering) analysis first. The dialog is unavailable on [connected datasets](#what-is-not-available-for-connected-datasets). A model's [per-image validation diagnostics](../train/models.md#per-image-diagnostics) run the same search from its worst-performing images.
+All three start on, and one license group always stays on. The license groups apply to your own and team datasets too, and the info icon beside each lists its licenses. Turn on **Show licenses** above the results to badge each image with its license. Click an image to preview it full size and see its source dataset, license, and similarity score. Select images with their checkboxes (or select all), then click **Add N to dataset**: they are added to the `train` split as unlabeled images, counted against your storage, and ready for [annotation](annotation.md).
+
+![Ultralytics Platform Datasets Find Similar Images Dialog](https://cdn.ul.run/i/b278f503014f8cecace1174d0ad28fcd.avif)<!-- screenshot -->
+
+An image without an embedding — in a dataset not yet analyzed, or added since the last analysis — is embedded when you open the dialog, so you do not need to run a [Clustering](#clustering) analysis first. On cloud storage datasets it needs [AI features](../integrations/index.md#ai-features) on and opens for browsing only, because images cannot be added to a connected dataset; it is unavailable on On Premise datasets. A model's [per-image validation diagnostics](../train/models.md#per-image-diagnostics) run the same search, with the same switches, from its worst-performing images.
 
 ## Dataset Tabs
 
-Each dataset page can show up to six tabs, depending on the dataset state and your permissions:
+Each dataset page can show up to seven tabs, depending on the dataset state and your permissions:
 
 ### Images Tab
 
@@ -603,17 +610,21 @@ Charts appear in this order, and each one is omitted when the dataset has no dat
 
 View all models trained on this dataset in a searchable table:
 
-| Column  | Description                                                                                                           |
-| ------- | --------------------------------------------------------------------------------------------------------------------- |
-| Model   | Parent project and model name, with links                                                                             |
-| Version | Immutable dataset version used for training, shown when any listed model used one                                     |
-| Status  | Training status badge                                                                                                 |
-| Task    | YOLO task type                                                                                                        |
-| Epochs  | Best epoch / total epochs                                                                                             |
-| Metrics | Two headline metrics for each task in the table, such as mAP50 and mAP50-95 for detection or Top-1 and Top-5 Accuracy |
-| Created | Creation date                                                                                                         |
+| Column  | Description                                                                                                                                 |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Model   | Parent project and model name, with links                                                                                                   |
+| Version | Immutable dataset version used for training, shown when any listed model used one                                                           |
+| Status  | Training status badge                                                                                                                       |
+| Task    | YOLO task type                                                                                                                              |
+| Epochs  | Best epoch / total epochs                                                                                                                   |
+| Metrics | Two headline metrics for each task in the table, such as mAP<sub>50</sub> and mAP<sub>50-95</sub> for detection or Top-1 and Top-5 Accuracy |
+| Created | Creation date                                                                                                                               |
 
 ![Ultralytics Platform Datasets Models Tab Trained Models Table](https://cdn.ul.run/i/c68f167c5eff1f7fff6a2c8b1772ad7a.avif)<!-- screenshot -->
+
+### Comments Tab
+
+Public datasets show a discussion thread. Anyone can read it; posting, replying, editing, and voting require signing in.
 
 ### Errors Tab
 
@@ -717,9 +728,21 @@ The optional image-level `metadata` object is preserved when an NDJSON file is i
 
 Pose datasets also carry a `kpt_shape` field in the dataset header line, inferred from the annotations when it is not already set.
 
+Datasets with custom class colors also carry a `colors` list of `"#rrggbb"` strings indexed by class id in the dataset header line. Models trained on the dataset draw their predictions with these colors.
+
 Depth exports declare `"task": "depth"` and `"depth_scale": 1000` in the dataset line. Each image line includes a
 `depth.url` for its paired plain uint16 PNG. Ultralytics downloads image and depth URLs concurrently and writes a
 training YAML with the same scale, so the NDJSON file can be passed directly to `model.train(data=...)`.
+
+The NDJSON file links to the images rather than containing them. To get the images and YOLO-format labels on your computer, pass the file, or the dataset's [`ul://` URI](#dataset-uri), straight to `model.train(data=...)` and Ultralytics downloads the images and builds the YOLO folders for you. To get the folders without training, convert the file locally:
+
+```python
+import asyncio
+
+from ultralytics.data.converter import convert_ndjson_to_yolo
+
+yaml_path = asyncio.run(convert_ndjson_to_yolo("my-dataset.ndjson", output_path="datasets"))
+```
 
 !!! note "Signed URLs"
 
@@ -745,8 +768,8 @@ Right-click an image in **Grid** or **Compact** view, or a single selected row i
 | **Blur Faces**              | Blur the faces detected in the image (see [Blur Faces](#blur-faces))                                                 |
 | **Copy** / **Cut**          | Copy or cut the image to paste it into another dataset (see [Copy and Move Images](#copy-and-move-images))           |
 | **Paste**                   | Paste copied or cut images into this dataset; shown when the clipboard holds images from another dataset             |
-| **Download**                | Download the original image file                                                                                     |
-| **Delete**                  | Delete the image from the dataset                                                                                    |
+| **Download**                | Download the full-size image file, turned as displayed if you rotated it                                             |
+| **Delete**                  | Permanently delete the image after you confirm; images don't go to [Trash](../account/trash.md)                      |
 
 ![Ultralytics Platform Datasets Image Card Context Menu](https://cdn.ul.run/i/cfd31e07fad45487f91d1ba876f5fca3.avif)<!-- screenshot -->
 
@@ -773,12 +796,12 @@ You can also drag and drop images onto the split filter tabs in grid view. If mo
 
 Redistribute all images across train, validation, and test splits using custom ratios:
 
-1. Click the **split bar** in the dataset toolbar to open the **Redistribute Splits** dialog
+1. In the **Images** tab, click the thin colored **split bar** directly below **All / Train / Val / Test** to open the **Redistribute Splits** dialog
 2. Adjust split percentages using any of the methods below
 3. Review the live image count preview to confirm the distribution
 4. Click **Apply** to randomly reassign all images according to your percentages
 
-![Ultralytics Platform Datasets Split Redistribution Dialog](https://cdn.ul.run/i/64f91c76882fa316d71be1cd0f286bd5.avif)<!-- screenshot -->
+![Ultralytics Platform Datasets Split Redistribution Dialog](https://cdn.ul.run/i/9886754189f74a7c98f27b0965a76fe0.avif)<!-- screenshot -->
 
 The dialog provides three ways to set your target split ratios:
 
@@ -815,7 +838,7 @@ Classes are matched by name, ignoring case except for one- and two-character nam
 
 ### Generate Similar Images
 
-Create new training images from one you already have. In a dataset you can edit, right-click an image in **Grid** or **Compact** view (or a single selected row in **Table** view) and choose **Generate similar images**. Platform describes new scenes inspired by the image and generates one image for each, so the results share the source's subjects and style without copying it.
+Create new [synthetic training images](https://www.ultralytics.com/glossary/synthetic-data) from one you already have. In a dataset you can edit, right-click an image in **Grid** or **Compact** view (or a single selected row in **Table** view) and choose **Generate similar images**. Platform describes new scenes inspired by the image and generates one image for each, so the results share the source's subjects and style without copying it.
 
 | Setting              | Description                                                                                                        |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------ |
@@ -824,17 +847,17 @@ Create new training images from one you already have. In a dataset you can edit,
 | **Image Size**       | Target longest edge from `256` to `2048` px in steps of `64` (default `1024`)                                      |
 | **Instructions**     | Optional description of what to vary or keep, such as lighting, viewpoint, background, or objects                  |
 
-![Ultralytics Platform Datasets Generate Similar Images Dialog](https://cdn.ul.run/i/734f0110f1ac27a9ac6579c1ffc0ab67.avif)<!-- screenshot -->
+![Ultralytics Platform Datasets Generate Similar Images Dialog](https://cdn.ul.run/i/18e20e79a9c9a69e538f85e719b122be.avif)<!-- screenshot -->
 
 **Ultralytics Image 9B** and **Krea 2 Turbo** are also listed, but you can select them only after you turn on [Early access](../account/settings.md#early-access). Krea 2 Turbo is the slowest option. Source proportions are preserved where supported. Very narrow images may need a larger longest edge, and output dimensions are rounded and limited to the generator's supported sizes.
 
-Click **Generate**, or press ⌘/Ctrl+Enter in **Instructions**. Images appear as they finish, all selected, and **Stop** ends a running batch while keeping the images that already arrived. To try other instructions or settings, change them and click **Generate more**: each new batch appears above the earlier ones, which keep their selection. Click an image to view it full size, clear the checkbox of any you don't want, and click **Add N to dataset**. The kept images are uploaded as JPEGs named after the source image, without labels, counted against your storage, and ready for [annotation](annotation.md). They use the active split filter: choose **Train** before generating to add them to `train`. With **All** selected, normal upload split assignment applies, including automatic validation splitting when needed. **Cancel** discards the previews without adding them. Generated images follow the dataset's [upload face-blurring setting](#blur-faces). The action is unavailable on [connected datasets](#what-is-not-available-for-connected-datasets).
+Click **Generate**, or press ⌘/Ctrl+Enter in **Instructions**. Images appear as they finish, all selected, and **Stop** ends a running batch while keeping the images that already arrived. To try other instructions or settings, change them and click **Generate more**: each new batch appears above the earlier ones, which keep their selection. Click an image to view it full size, clear the checkbox of any you don't want, and click **Add N to dataset**. The kept images are uploaded as JPEGs named after the source image, without labels, counted against your storage, and ready for [annotation](annotation.md). They use the active split filter: choose **Train** before generating to add them to `train`. With **All** selected, normal upload split assignment applies, including automatic validation splitting when needed. **Cancel** discards the previews without adding them. Generated images follow the dataset's [upload face-blurring setting](#blur-faces). On cloud storage datasets, the action needs [AI features](../integrations/index.md#ai-features) on and a bucket with write access: kept images are written to a `generated/` folder in the dataset's folder instead of Platform storage. It is unavailable on read-only buckets and On Premise datasets.
 
 #### Paid Image Generation Models
 
-![Ultralytics Platform Datasets Generate Similar Images Model Picker](https://cdn.ul.run/i/795e7421c7e44b3905f851598276c6c9.avif)<!-- screenshot -->
+![Ultralytics Platform Datasets Generate Similar Images Model Picker](https://cdn.ul.run/i/75c5b3225c5f6ddba70ede28b6d3b2fd.avif)<!-- screenshot -->
 
-The model picker also lists paid models from each provider, by API name. OpenAI models generate at low quality.
+The model picker also lists paid models from each provider. OpenAI models generate at low quality.
 
 <platform-image-models></platform-image-models>
 
@@ -842,14 +865,14 @@ A paid model generates with the provider key saved in the dataset workspace's [*
 
 ### Blur Faces
 
-In a dataset you can edit, blur the faces in its images, for example to protect the privacy of people in your data. Blur Faces is not available for [connected datasets](#what-is-not-available-for-connected-datasets) or for datasets with more than three image channels.
+In a dataset you can edit, blur the faces in its images, for example to protect the [privacy](https://www.ultralytics.com/glossary/data-privacy) of people in your data. Blur Faces is not available for [connected datasets](#what-is-not-available-for-connected-datasets) or for datasets with more than three image channels.
 
 - **One image:** right-click the image in **Grid** or **Compact** view (or a single selected row in **Table** view), or, while annotating in the fullscreen viewer (not on classification datasets), right-click the image or an annotation, and choose **Blur faces**.
 - **Whole dataset:** open **More actions** (`⋯`) on the dataset page and choose **Blur faces**.
 
 The dialog first previews the detected faces on up to six images (or on the one image) without changing them. Adjust **Confidence** (default `0.25`) and **Box scale** (`0.5`–`1.5`, default `1`, which scales each face box around its center) to re-run the preview, then click **Apply** to replace the original pixels of every image in which faces are found. Images without detected faces are left unchanged, labels and splits are kept, and some faces may be missed, so review the result. Blurring does not automatically create a [version snapshot](#versions-tab). Blurring a whole dataset costs $1.00 per 1,000 processed images, with a minimum of $0.01 per run (billed as **Auto-Annotation**), and the dialog shows the estimate before you apply; previews and single-image blurring are free.
 
-![Ultralytics Platform Datasets Blur Faces Dialog Preview](https://cdn.ul.run/i/7b82938e0bd11da4e8620b73cf8e8e44.avif)<!-- screenshot -->
+![Ultralytics Platform Datasets Blur Faces Dialog Preview](https://cdn.ul.run/i/8b7fe3d3fc18df1dc127c8388d3092d4.avif)<!-- screenshot -->
 
 To blur faces in images as they are uploaded, turn on **Blur faces** when you create a dataset from **Upload** or **URL**, or **Blur future uploads** in the whole-dataset **Blur faces** dialog. The **Blur future uploads** switch saves immediately, even if you close the dialog without clicking **Apply**. Images uploaded to the dataset afterward are blurred during processing, at no charge; changing this setting does not blur images already in the dataset.
 
@@ -886,7 +909,7 @@ Use this URI to train models from anywhere:
     The `ul://` URI works from any environment:
 
     - **Local machine**: Train on your hardware, data downloaded automatically
-    - **Google Colab**: Access your Platform datasets in notebooks
+    - **[Google Colab](../../integrations/google-colab.md)**: Access your Platform datasets in notebooks
     - **Remote servers**: Train on cloud VMs with full dataset access
 
 ## Available Licenses
@@ -936,7 +959,7 @@ Control who can see your dataset:
 | **Private** | You and permitted workspace members can access   |
 | **Public**  | Anyone can view, including from the Explore page |
 
-Visibility is set when creating a dataset in the `New Dataset` dialog using a toggle switch. To change it later, click the **Public** or **Private** badge next to the dataset name in the page breadcrumb; making a dataset public asks for confirmation. [On Premise](../integrations/on-premise.md) datasets are always private. Public datasets are visible on the [Explore](../explore.md) page.
+Visibility is set when creating a dataset in the `New Dataset` dialog using a toggle switch, which starts at the workspace's [default visibility](../account/settings.md#default-visibility). To change it later, click the **Public** or **Private** badge next to the dataset name in the page breadcrumb; making a dataset public asks for confirmation. [On Premise](../integrations/on-premise.md) datasets are always private. Public datasets are visible on the [Explore](../explore.md) page.
 
 ## Edit Dataset
 
@@ -950,7 +973,7 @@ Dataset metadata is edited inline directly on the dataset page — no dialog nee
 
 !!! info "Changing Task Type"
 
-    Each image stores annotations for all task types together. Changing the dataset task type controls which annotations are visible in the editor and included in exports and training. Annotations for other task types are preserved in the database and reappear when you switch back. [Depth](../../datasets/depth/index.md#depth-map-format) is the exception: its ground truth is a paired file rather than an annotation, so a dataset can only switch to or from depth while it holds no images — re-import it instead.
+    Each image stores annotations for all task types together. Changing the dataset task type controls which annotations are visible in the editor and included in exports and training. Annotations for other task types are preserved in the database and reappear when you switch back. A detect dataset also shows, exports, and trains [OBB](../../datasets/obb/index.md) annotations as their enclosing boxes. [Depth](../../datasets/depth/index.md#depth-map-format) is the exception: its ground truth is a paired file rather than an annotation, so a dataset can only switch to or from depth while it holds no images — re-import it instead.
 
 ### Custom Metadata
 
@@ -963,9 +986,9 @@ Workspace viewers can inspect metadata, while members with edit access can repla
 
 ## Clone Dataset
 
-When viewing a public dataset you do not own, click `Clone Dataset` to open the clone dialog. Review the destination workspace, name, visibility, and license, then confirm the clone. The copy includes all images, annotations, and class definitions. Public source datasets stay public by default in workspaces whose default visibility is public; Enterprise workspace clones default to private. If the original dataset has a copyleft license, the clone inherits it and the license selector is locked.
+When viewing a public dataset you do not own, click `Clone Dataset` to open the clone dialog. Review the destination workspace, name, visibility, and license, then confirm the clone. The copy includes all images, annotations, and class definitions unless you pick only some of its **Splits** or one of its saved **Versions**, and **Existing dataset** adds the images without labels to a dataset you own instead. To copy only some images, tick them in **Grid** or **Compact** view and click **Clone Images**; its **Annotations** switch decides whether their labels come along. A clone always goes to a different workspace than its source: to duplicate a dataset in its own workspace, or to copy images between datasets you can edit, create or open the destination dataset and use [Copy and Paste](#copy-and-move-images) instead. Public source datasets stay public by default unless the workspace's [default dataset visibility](../account/settings.md#default-visibility) is Private. If the original dataset has a copyleft license, the clone inherits it and the license selector is locked.
 
-The clone dialog keeps **Clone Dataset** disabled while the URL is already used in the target workspace, and cloning requires enough remaining storage quota to hold the copy.
+For a new dataset, the clone dialog keeps **Clone Dataset** disabled while the URL is already used in the target workspace. Cloning requires enough remaining storage quota to hold the copy.
 
 !!! note "Connected Datasets"
 
@@ -986,13 +1009,15 @@ Delete a dataset you no longer need:
 
 The same menu holds **Information**, which opens the metadata dialog described in [Custom Metadata](#custom-metadata), and **Refresh**, which re-reads the dataset from the server.
 
+To delete several datasets at once, select their rows in the table view of the **Datasets** tab on your profile (or on a team profile where you are an Editor or above) and click **Delete (N)**, choose it from the right-click menu, or press `Cmd/Ctrl+Delete`.
+
 !!! note "Trash and Restore"
 
     Deleted datasets are moved to Trash — not permanently deleted. You can restore them within 30 days from [`Settings > Trash`](../account/trash.md).
 
 ## Train on Dataset
 
-Start training directly from your dataset:
+Start from a dataset you can edit. If you are viewing another workspace's public dataset, [clone it](#clone-dataset) and open the copy first.
 
 1. Click `New Model` on the dataset page
 2. Select a project or create new
@@ -1017,7 +1042,7 @@ Your data is processed and stored in your selected region (US, EU, or AP). Image
 
 1. Validated for format and size
 2. Rejected if minimum dimension is below 28px
-3. Normalized if larger than 4096px (preserving aspect ratio; encoded for optimized storage; TIFF stored as uploaded)
+3. Normalized if larger than 4096px (preserving aspect ratio; encoded for optimized storage; most TIFF originals stored as uploaded)
 4. Stored with deduplication, so identical images are kept only once
 5. Thumbnails generated at 256px WebP for fast browsing
 
@@ -1040,30 +1065,20 @@ Yes. Copy or cut images in one dataset and paste them into another dataset you c
 
 ### Can I download my dataset in YOLO format?
 
-Platform exports datasets as [NDJSON](#export-dataset), not as YOLO folders. You usually don't need to convert it: pass the NDJSON file, or the dataset's [`ul://` URI](#dataset-uri), straight to `model.train(data=...)` and Ultralytics downloads the images and builds the YOLO folders for you. To get the folders without training, convert the file locally:
-
-```python
-import asyncio
-
-from ultralytics.data.converter import convert_ndjson_to_yolo
-
-yaml_path = asyncio.run(convert_ndjson_to_yolo("my-dataset.ndjson", output_path="datasets"))
-```
-
-The image links in an export expire 7 days after the export is generated, and a cached export may have only a day left, so convert it promptly. [On Premise](../integrations/on-premise.md) datasets cannot be exported.
+Platform exports datasets as NDJSON, not as YOLO folders. [Export Dataset](#export-dataset) shows how to download the images and build the YOLO folders from that file, with or without training. [On Premise](../integrations/on-premise.md) datasets cannot be exported.
 
 ### How does Platform split my images into train, val and test?
 
-Your upload sets the split. With the **All** split filter selected, images inside `train/`, `val/` or `test/` folders keep that split. Selecting **Train**, **Val** or **Test** before uploading sends every new image to that split instead. If an upload with no split selected leaves `val` empty, Platform moves about 20% of the train images (at least one) to `val`. Classification datasets use their folder structure instead, and depth datasets follow separate rules for paired depth maps. Check the dataset's `Ready` badge before training.
+Your upload sets the split. With the **All** split filter selected, images inside `train/`, `val/` or `test/` folders keep that split. Selecting **Train**, **Val** or **Test** before uploading sends every new image to that split instead. If an upload with no split selected leaves `val` empty, Platform moves about 20% of the train images (at least one) to `val`. Classification datasets use their folder structure instead, except classification projects [imported from Label Studio](../integrations/label-studio.md), which move about 20% of their labeled images to `val`, and depth datasets follow separate rules for paired depth maps. Check the dataset's `Ready` badge before training.
 
 To change the split afterwards:
 
-- **Change the ratio**: click the split bar in the dataset toolbar and set the percentages, or click **Auto** for 80/20 train/val. See [Split Redistribution](#split-redistribution).
+- **Change the ratio**: in the **Images** tab, click the thin colored split bar below **All / Train / Val / Test** and set the percentages, or click **Auto** for 80/20 train/val. See [Split Redistribution](#split-redistribution).
 - **Move specific images**: select them in **Table** view, right-click, and choose `Move to split`. See [Bulk Move to Split](#bulk-move-to-split).
 
 ### Are my datasets private?
 
-Check the visibility toggle before you create a dataset: new datasets default to **Public** on Free and Pro plans and to **Private** on Enterprise. A public dataset can be viewed by anyone, including people who are not signed in, and appears on [Explore](../explore.md). A private dataset is visible only to you and permitted workspace members. Members with edit access can change visibility from the badge next to the dataset name, and [On Premise](../integrations/on-premise.md) datasets are always private. Making a dataset private does not remove copies other users have already cloned. See [Visibility Settings](#visibility-settings).
+Check the visibility toggle before you create a dataset: new datasets start with the workspace's [default visibility](../account/settings.md#default-visibility), which is **Public** on Free and Pro plans and **Private** on Enterprise until an owner or admin changes it. A public dataset can be viewed by anyone, including people who are not signed in, and appears on [Explore](../explore.md). A private dataset is visible only to you and permitted workspace members. Members with edit access can change visibility from the badge next to the dataset name, and [On Premise](../integrations/on-premise.md) datasets are always private. Making a dataset private does not remove copies other users have already cloned. See [Visibility Settings](#visibility-settings).
 
 ### What label formats are supported?
 
@@ -1095,7 +1110,7 @@ Ultralytics Platform supports YOLO labels, COCO JSON, [LabelMe](../integrations/
 
 ### Can I annotate the same dataset for multiple task types?
 
-Yes. Each image stores annotations for all 6 annotation task types (detect, segment, semantic, classify, pose, OBB) together. You can switch the dataset's active task type at any time without losing existing annotations. Only annotations matching the active task type are shown in the editor and included in exports and training — annotations for other tasks are preserved and reappear when you switch back.
+Yes. Each image stores annotations for all 6 annotation task types (detect, segment, semantic, classify, pose, OBB) together. You can switch the dataset's active task type at any time without losing existing annotations. Only annotations matching the active task type are shown in the editor and included in exports and training (a detect dataset also uses OBB annotations as their enclosing boxes) — annotations for other tasks are preserved and reappear when you switch back.
 
 ### Are there limits on classes and annotations?
 
@@ -1113,19 +1128,19 @@ Yes:
 
 ### What is not available for connected datasets?
 
-Datasets that read from [cloud storage](../integrations/index.md) or [On Premise](../integrations/on-premise.md) sources keep their pixels outside Platform, so the features that need Platform-owned copies of the image bytes are unavailable:
+Datasets that read from [cloud storage](../integrations/index.md) or [On Premise](../integrations/on-premise.md) sources keep their pixels outside Platform. Features that need Platform-owned copies of the image bytes are unavailable, and features that read images on Ultralytics GPUs need [AI features](../integrations/index.md#ai-features) on for cloud storage:
 
-| Feature                                                      | Cloud-connected | On Premise  |
-| ------------------------------------------------------------ | --------------- | ----------- |
-| [Smart and Batch Annotation](annotation.md#smart-annotation) | Unavailable     | Unavailable |
-| [Clustering analysis](#clustering)                           | Unavailable     | Unavailable |
-| [Cloning](#clone-dataset)                                    | Unavailable     | Unavailable |
-| [Version snapshots](#versions-tab)                           | Unavailable     | Unavailable |
-| [NDJSON export](#export-dataset)                             | Available       | Unavailable |
-| [Semantic PNG mask import](#preparing-your-dataset)          | Unavailable     | Available   |
-| [Blur faces](#blur-faces)                                    | Unavailable     | Unavailable |
-| [Find similar images](#find-similar-images)                  | Unavailable     | Unavailable |
-| [Generate similar images](#generate-similar-images)          | Unavailable     | Unavailable |
-| [Pasting images](#copy-and-move-images) into the dataset     | Unavailable     | Unavailable |
+| Feature                                                      | Cloud-connected                   | On Premise  |
+| ------------------------------------------------------------ | --------------------------------- | ----------- |
+| [Smart and Batch Annotation](annotation.md#smart-annotation) | With AI features                  | Unavailable |
+| [Clustering analysis](#clustering)                           | With AI features                  | Unavailable |
+| [Cloning](#clone-dataset)                                    | Unavailable                       | Unavailable |
+| [Version snapshots](#versions-tab)                           | Unavailable                       | Unavailable |
+| [NDJSON export](#export-dataset)                             | Available                         | Unavailable |
+| [Semantic PNG mask import](#preparing-your-dataset)          | Unavailable                       | Available   |
+| [Blur faces](#blur-faces)                                    | Unavailable                       | Unavailable |
+| [Find similar images](#find-similar-images)                  | With AI features, browse only     | Unavailable |
+| [Generate similar images](#generate-similar-images)          | With AI features and write access | Unavailable |
+| [Pasting images](#copy-and-move-images) into the dataset     | Unavailable                       | Unavailable |
 
 Browsing, manual annotation, class management, splits, statistics, and training all work normally.

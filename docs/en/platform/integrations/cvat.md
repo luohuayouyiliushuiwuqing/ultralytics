@@ -22,7 +22,7 @@ Until then there is a short path that works today, because CVAT already exports 
 5. **Upload to Platform.** [Create a new dataset](../data/datasets.md) from the ZIP.
 6. **Train.** [Edit the annotations](../data/annotation.md), [train](../train/index.md), and [deploy](../deploy/index.md) without leaving the workspace.
 
-![Ultralytics Platform CVAT Dataset Import](https://cdn.ul.run/i/bdc1bd479481181ca5088f467ea945c6.avif)<!-- screenshot -->
+![Ultralytics Platform CVAT Dataset Import](https://cdn.ul.run/i/c12aa22532fddbc7e3de98906e5a7e73.avif)<!-- screenshot -->
 
 ### Export with the CLI
 
@@ -88,7 +88,7 @@ Picking the right export format is the step the integration removes. Once it shi
 
 !!! tip "Available now"
 
-    The [Labelbox](labelbox.md) and [Roboflow](roboflow.md) integrations work today, and Platform imports YOLO, COCO, [LabelMe](labelme.md) JSON, and Ultralytics or Labelbox NDJSON datasets directly.
+    The [Labelbox](labelbox.md), [Roboflow](roboflow.md), and [Label Studio](label-studio.md) integrations work today, and Platform imports YOLO, COCO, [LabelMe](labelme.md) JSON, and Ultralytics or Labelbox NDJSON datasets directly.
 
 ## FAQ
 

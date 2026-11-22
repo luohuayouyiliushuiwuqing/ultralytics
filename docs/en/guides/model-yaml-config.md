@@ -1,12 +1,12 @@
 ---
 comments: true
-description: Learn how to structure and customize model architectures using Ultralytics YAML configuration files. Master module definitions, connections, and scaling parameters.
-keywords: Ultralytics, YOLO, model architecture, YAML configuration, neural networks, deep learning, backbone, head, modules, custom models
+description: Structure and customize Ultralytics model architectures with YAML configuration files, covering module definitions, layer connections, scaling, custom modules, and training P2 and other custom YAMLs from pretrained weights.
+keywords: Ultralytics, YOLO, model architecture, YAML configuration, neural networks, deep learning, backbone, head, modules, custom models, YOLO P2, yolo26-p2, small object detection, pretrained weights
 ---
 
 # Model YAML Configuration Guide
 
-The model YAML configuration file serves as the architectural blueprint for Ultralytics neural networks. It defines how layers connect, what parameters each module uses, and how the entire network scales across different model sizes.
+The model [YAML](https://www.ultralytics.com/glossary/yaml) configuration file serves as the architectural blueprint for Ultralytics [neural networks](https://www.ultralytics.com/glossary/neural-network-nn). It defines how layers connect, what parameters each module uses, and how the entire network scales across different model sizes.
 
 <img width="1024" src="https://cdn.ul.run/i/a563b72f7404e71fb4c61b7710d28acf.avif" alt="Model YAML configuration workflow.">
 
@@ -40,11 +40,11 @@ kpt_shape: [17, 3] # pose models only
 
 !!! note "`nc` and `kpt_shape` are dataset-dependent"
 
-    If your dataset specifies a different `nc` or `kpt_shape`, Ultralytics will automatically override the model config at runtime to match the dataset YAML.
+    If your dataset specifies a different `nc` or `kpt_shape`, Ultralytics automatically overrides the model config at runtime to match the dataset YAML.
 
 ### Backbone and Head Architecture
 
-The model architecture consists of backbone (feature extraction) and head (task-specific) sections:
+The model architecture consists of [backbone](https://www.ultralytics.com/glossary/backbone) (feature extraction) and head (task-specific) sections:
 
 ```yaml
 nc: 80
@@ -148,7 +148,7 @@ Modules are organized by functionality and defined in the [Ultralytics modules d
 
 ### TorchVision Integration
 
-The TorchVision module enables seamless integration of any [TorchVision model](https://docs.pytorch.org/vision/stable/models.html) as a backbone:
+The TorchVision module lets you use any [TorchVision model](https://docs.pytorch.org/vision/stable/models.html) as a backbone:
 
 === "Python"
 
@@ -364,6 +364,41 @@ head:
 
 `Classify` already performs adaptive average pooling internally.
 
+## Train a YOLO26 P2 Model from Pretrained Weights
+
+[`yolo26-p2.yaml`](https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/models/26/yolo26-p2.yaml) adds a P2 output at stride 4 to the standard P3–P5 outputs, so the head sees finer features for very small objects. It ships as a YAML only, with no `yolo26n-p2.pt` weights, so build it from the YAML and load the standard `yolo26n.pt` weights into it before training:
+
+!!! example "Train YOLO26n-P2 from yolo26n.pt weights"
+
+    === "Python"
+
+        ```python
+        from ultralytics import YOLO
+
+        model = YOLO("yolo26n-p2.yaml").load("yolo26n.pt")  # build the P2 architecture, then load matching weights
+        model.train(data="coco8.yaml", epochs=100, imgsz=640)
+        ```
+
+    === "CLI"
+
+        ```bash
+        yolo train model=yolo26n-p2.yaml pretrained=yolo26n.pt data=coco8.yaml epochs=100 imgsz=640
+        ```
+
+Weights load by layer name and shape, and the log reports how many tensors matched: `Transferred 360/902 items from pretrained weights` for YOLO26n. Layers 0–16, the backbone and the top-down neck down to P3, have the same indices and shapes in both YAMLs, so they load completely. The P2 branch inserted at layer 17 shifts every later layer index, so the bottom-up path and the four-output `Detect` head start mostly from random initialization and learn during training.
+
+Check that the P2 output is really there before a long run:
+
+```python
+from ultralytics import YOLO
+
+model = YOLO("yolo26n-p2.yaml").load("yolo26n.pt")
+print(model.model.stride)  # tensor([ 4.,  8., 16., 32.]): the stride-4 entry is the P2 output
+model.info()  # YOLO26n-p2 summary: 329 layers, 2,662,400 parameters, 2,662,400 gradients, 9.6 GFLOPs
+```
+
+The same check on `yolo26n.yaml` reports strides `[8, 16, 32]` and 6.2 GFLOPs, so the P2 output costs about 1.5x the compute at the same image size. Reach for it when your targets are only a few pixels wide at your training `imgsz`; otherwise the standard model is cheaper to train and run.
+
 ## Best Practices
 
 ### Architecture Design Tips
@@ -382,11 +417,11 @@ head:
 
 **Depth vs Width**: Deep networks capture complex hierarchical features through multiple transformation layers, while wide networks process more information in parallel at each layer. Balance these based on your task complexity.
 
-**Skip Connections**: Improve gradient flow during training and enable feature reuse throughout the network. They're particularly important in deeper architectures to prevent vanishing gradients.
+**Skip Connections**: Improve gradient flow during training and enable feature reuse throughout the network. They're particularly important in deeper architectures to prevent [vanishing gradients](https://www.ultralytics.com/glossary/vanishing-gradient).
 
 **Bottleneck Blocks**: Reduce computational cost while maintaining model expressiveness. Modules like `C2f` use fewer parameters than standard convolutions while preserving feature learning capacity.
 
-**Multi-Scale Features**: Essential for detecting objects at different sizes in the same image. Use Feature Pyramid Network (FPN) patterns with multiple detection heads at different scales.
+**Multi-Scale Features**: Essential for detecting objects at different sizes in the same image. Use [Feature Pyramid Network (FPN)](https://www.ultralytics.com/glossary/feature-pyramid-network-fpn) patterns with multiple detection heads at different scales.
 
 ## Troubleshooting
 
@@ -493,7 +528,7 @@ Define your module in the source code, import it as shown in [Source Code Modifi
 
 ### Can I use pretrained weights with a custom YAML?
 
-Yes, you can use `model.load("path/to/weights")` to load weights from a pretrained checkpoint. However, only weights for layers that match would load successfully.
+Yes. `YOLO("custom.yaml").load("yolo26n.pt")` loads every layer whose name and shape match the checkpoint, and the log reports how many tensors transferred; layers that differ start from random initialization. [Train a YOLO26 P2 Model from Pretrained Weights](#train-a-yolo26-p2-model-from-pretrained-weights) walks through a worked example.
 
 ### How do I validate my model configuration?
 

@@ -29,10 +29,11 @@ from ultralytics.utils import (
     emojis,
     is_dir_writeable,
 )
-from ultralytics.utils.checks import check_file, check_font, is_ascii, normalize_platform_uri
+from ultralytics.utils.checks import FONT, FONT_UNICODE, check_file, check_font, is_ascii, normalize_platform_uri
 from ultralytics.utils.downloads import download, safe_download
 from ultralytics.utils.ops import segments2boxes
 from ultralytics.utils.patches import imread
+from ultralytics.utils.plotting import Colors
 
 HELP_URL = "See https://docs.ultralytics.com/datasets for dataset formatting guidance."
 IMG_FORMATS = {
@@ -63,6 +64,17 @@ DATASET_KEY_TYPES = {  # dataset YAML keys and their permitted types
 }
 
 DEPTH_PNG_SCALE = 1000  # uint16 millimeters by default; zero is invalid
+
+
+def tile_windows(
+    shape: tuple[int, int], size: int | tuple[int, int], overlap: float = 0.2
+) -> list[tuple[int, int, int, int]]:
+    """Return native-pixel windows covering an image, overlapping by a fraction and edges aligned to its boundary."""
+    h, w = shape
+    th, tw = (size, size) if isinstance(size, int) else size
+    ys = range(0, max(h - th, 0), max(1, round(th * (1 - overlap))))
+    xs = range(0, max(w - tw, 0), max(1, round(tw * (1 - overlap))))
+    return [(x, y, min(x + tw, w), min(y + th, h)) for y in (*ys, max(h - th, 0)) for x in (*xs, max(w - tw, 0))]
 
 
 def save_depth_png(path: str | Path, depth: np.ndarray, scale: float = DEPTH_PNG_SCALE) -> None:
@@ -382,9 +394,9 @@ def read_mask(mask_file: str, mode: str) -> np.ndarray:
         FileNotFoundError: If the mask file is missing or unreadable.
     """
     if mode == "P":  # colored (VOC-style) palettes hold class ids as indices, gray palettes as gray levels
-        with Image.open(mask_file) as im:
-            p = np.array(im.getpalette()).reshape(-1, 3)
-            return np.array(im.convert("L") if (p == p[:, :1]).all() else im)
+        with Image.open(mask_file) as im:  # unless a short gray palette, e.g. Image.fromarray(m, "P"), merges ids
+            p, gray = np.array(im.getpalette()).reshape(-1, 3), im.convert("L")
+            return np.array(gray if (p == p[:, :1]).all() and len(gray.getcolors()) == len(im.getcolors()) else im)
     mask = cv2.imread(mask_file, cv2.IMREAD_ANYDEPTH)  # keeps 16-bit ids
     if mask is None:
         raise FileNotFoundError(f"Semantic mask not found or unreadable: {mask_file}")
@@ -395,9 +407,8 @@ def verify_image_mask(args: tuple) -> tuple:
     """Verify that an image and its semantic mask exist, are readable, match in shape, and hold valid class ids.
 
     Args:
-        args (tuple): Tuple of (im_file, mask_file, prefix, invalid). If mask_file is missing, masks with the same stem
-            and another image extension are tried. invalid is a 256-entry uint8 lookup table that is nonzero for raw
-            mask ids that map to neither a dataset class nor the 255 ignore label.
+        args (tuple): Tuple of (im_file, mask_file, prefix, invalid), where invalid is a 256-entry uint8 lookup table
+            that is nonzero for raw mask ids that map to neither a dataset class nor the 255 ignore label.
 
     Returns:
         (tuple): Tuple of (im_file, mask_file, shape, mode, nm, nf, nc, msg), where the first four are None for rejected
@@ -410,12 +421,6 @@ def verify_image_mask(args: tuple) -> tuple:
     try:
         msg, shape = check_image(im_file)
         msg = f"{prefix}{msg}" if msg else ""
-        if not os.path.isfile(mask_file):
-            for ext in IMG_FORMATS:  # check other suffixes
-                alt_mask_file = mask_file.rsplit(".", 1)[0] + f".{ext}"
-                if os.path.isfile(alt_mask_file):
-                    mask_file = alt_mask_file
-                    break
         if os.path.isfile(mask_file):
             with Image.open(mask_file) as im:
                 mode = im.mode  # recorded so load_mask reads each mask once
@@ -437,7 +442,7 @@ def verify_image_mask(args: tuple) -> tuple:
 
 
 def verify_image_label(args: tuple) -> tuple | list:
-    """Verify one image-label pair, accepting UTF-8 labels with or without a byte-order mark.
+    """Verify one image-label pair.
 
     Args:
         args (tuple): Tuple of (im_file, lb_file, prefix, keypoint, num_cls, nkpt, ndim, single_cls).
@@ -459,7 +464,7 @@ def verify_image_label(args: tuple) -> tuple | list:
         # Verify labels
         if os.path.isfile(lb_file):
             nf = 1  # label found
-            with open(lb_file, encoding="utf-8-sig") as f:
+            with open(lb_file, encoding="utf-8") as f:
                 lb = [x.split() for x in f.read().strip().splitlines() if x.strip()]
                 if nkpt and not keypoint:  # pose labels for a box task: keep the box, drop the keypoints
                     lb = [x[:5] if len(x) == 5 + nkpt * ndim else x for x in lb]
@@ -676,8 +681,11 @@ def get_split_fraction(fraction: float | list[float | int], split: str) -> float
         (float | int): Fraction of the split to use as a ratio (float) or image count (int).
 
     Raises:
+        TypeError: If the fraction or a per-split value is a boolean.
         ValueError: If the resolved fraction is 0 for the 'train' or 'val' split.
     """
+    if isinstance(fraction, bool) or (isinstance(fraction, list) and any(isinstance(x, bool) for x in fraction)):
+        raise TypeError(f"'fraction' must not contain boolean values: {fraction!r}")
     if isinstance(fraction, list) and split in (splits := ("train", "val", "test")):
         index = splits.index(split)
         fraction = fraction[index] if index < len(fraction) else 1.0
@@ -705,7 +713,7 @@ def convert_ndjson_to_yolo_if_needed(
     """
     data = normalize_platform_uri(data)  # accept Platform web URLs (https://platform.ultralytics.com/.../datasets/...)
     data_str = str(data)
-    if clean_url(data_str).endswith(".ndjson") or (data_str.startswith("ul://") and "/datasets/" in data_str):
+    if clean_url(data_str).endswith(".ndjson") or (data_str.lower().startswith("ul://") and "/datasets/" in data_str):
         import asyncio
 
         from ultralytics.data.converter import convert_ndjson_to_yolo
@@ -783,6 +791,8 @@ def check_det_dataset(dataset: str | Path, autodownload: bool = True, split: str
         data["nc"] = len(data["names"])
 
     data["names"] = check_class_names(data["names"])
+    if not Colors.parse(data.get("colors")):  # a malformed list warns once here and never reaches model or plots
+        data.pop("colors", None)
     data["channels"] = data.get("channels", 3)  # get image channels, default to 3
 
     # Resolve paths
@@ -817,13 +827,10 @@ def check_det_dataset(dataset: str | Path, autodownload: bool = True, split: str
                 raise FileNotFoundError(m)
             t = time.time()
             r = None  # success
-            if s.startswith("http") and s.endswith(
+            if s.lower().startswith("http") and clean_url(s).lower().endswith(
                 (".zip", ".tar", ".gz", ".tgz", ".xz", ".bz2", ".txz", ".tbz2")
             ):  # URL
                 safe_download(url=s, dir=DATASETS_DIR, delete=True)
-            elif s.startswith("bash "):  # bash script
-                LOGGER.info(f"Running {s} ...")
-                subprocess.run(s.split(), check=True)
             else:  # python script
                 exec(s, {"yaml": data})  # noqa: S102
             dt = f"({round(time.time() - t, 1)}s)"
@@ -831,7 +838,7 @@ def check_det_dataset(dataset: str | Path, autodownload: bool = True, split: str
             LOGGER.info(f"Dataset download {s}\n")
     if data.get("masks_dir") is None and (path / "masks").is_dir():  # after download so scripts can create it
         data["masks_dir"] = "masks"  # PNG semantic masks in the default folder select SemanticDataset
-    check_font("Arial.ttf" if is_ascii(data["names"]) else "Arial.Unicode.ttf")  # download fonts
+    check_font(FONT if is_ascii(data["names"]) else FONT_UNICODE)  # download fonts
 
     return data  # dictionary
 
@@ -843,7 +850,9 @@ def check_cls_dataset(dataset: str | Path, split: str = "") -> dict[str, Any]:
     dataset is not found locally, it attempts to download the dataset from the internet and save it locally.
 
     Args:
-        dataset (str | Path): The dataset name, local directory path, archive file, or archive URL.
+        dataset (str | Path): The dataset name, local directory path, archive file, or archive URL. Archive suffixes
+            match in any letter case, and an existing directory is used as a directory even when its name ends in an
+            archive suffix.
         split (str, optional): The split of the dataset. Either 'train', 'val', 'test', or ''.
 
     Returns:
@@ -860,9 +869,11 @@ def check_cls_dataset(dataset: str | Path, split: str = "") -> dict[str, Any]:
         raise ValueError(f"Invalid classification dataset split '{split}'. Use 'train', 'val', or 'test'.")
 
     # Download (optional if dataset=https://file.zip is passed directly)
-    if str(dataset).startswith(("http:/", "https:/")):
+    if str(dataset).lower().startswith(("http:/", "https:/")):
         dataset = safe_download(dataset, dir=DATASETS_DIR, unzip=True, delete=False)
-    elif str(dataset).endswith((".zip", ".tar", ".gz", ".tgz", ".xz", ".bz2", ".txz", ".tbz2")):
+    elif not Path(dataset).is_dir() and str(dataset).lower().endswith(
+        (".zip", ".tar", ".gz", ".tgz", ".xz", ".bz2", ".txz", ".tbz2")
+    ):
         file = check_file(dataset)
         dataset = safe_download(file, dir=DATASETS_DIR, unzip=True, delete=False)
 
@@ -874,6 +885,8 @@ def check_cls_dataset(dataset: str | Path, split: str = "") -> dict[str, Any]:
                 f'Classification datasets must be a directory (data="path/to/dir") not a file (data="{dataset}"), '
                 "See https://docs.ultralytics.com/datasets/classify"
             )
+        if str(dataset) != dataset.name:  # download only an official dataset by bare name, never a user path
+            raise FileNotFoundError(f"'{data_dir}' does not exist")
         LOGGER.info("")
         LOGGER.warning(f"Dataset not found, missing path {data_dir}, attempting download...")
         t = time.time()
@@ -903,6 +916,10 @@ def check_cls_dataset(dataset: str | Path, split: str = "") -> dict[str, Any]:
         else None
     )  # data/test or data/val
     test_set = data_dir / "test" if (data_dir / "test").exists() else None  # data/val or data/test
+    if split in {"val", "test"} and not (val_set or test_set):
+        raise FileNotFoundError(
+            f"No 'val' or 'test' split in {data_dir} ❌. Add a 'val' directory of class directories."
+        )
     if split == "val" and not val_set:
         LOGGER.warning("Dataset 'split=val' not found, using 'split=test' instead.")
         val_set = test_set
@@ -930,11 +947,8 @@ def check_cls_dataset(dataset: str | Path, split: str = "") -> dict[str, Any]:
                     raise FileNotFoundError(f"{dataset} '{k}:' no training images found")
                 else:
                     LOGGER.warning(f"{prefix} found {nf} images in {nd} classes (no images found)")
-            elif nd != nc and not ndjson_names.is_file():
-                LOGGER.error(f"{prefix} found {nf} images in {nd} classes (requires {nc} classes, not {nd})")
             else:
-                class_count = f"{nd}/{nc}" if ndjson_names.is_file() else nd
-                LOGGER.info(f"{prefix} found {nf} images in {class_count} classes ✅ ")
+                LOGGER.info(f"{prefix} found {nf} images in {nd}/{nc} classes ✅ ")
 
     return {"train": train_set, "val": val_set, "test": test_set, "nc": nc, "names": names, "channels": 3}
 
@@ -965,7 +979,7 @@ def compress_one_image(f: str | Path, f_new: str | Path | None = None, max_dim: 
             im = im.convert("RGB")
         r = max_dim / max(im.height, im.width)  # ratio
         if r < 1.0:  # image too large
-            im = im.resize((int(im.width * r), int(im.height * r)))
+            im = im.resize((max(1, int(im.width * r)), max(1, int(im.height * r))))
         _replace_image(f_new or f, lambda tmp: im.save(tmp, "JPEG", quality=quality, optimize=True))
     except Exception as e:  # use OpenCV
         LOGGER.warning(f"Image compression PIL failure {f}: {e}")
@@ -973,7 +987,7 @@ def compress_one_image(f: str | Path, f_new: str | Path | None = None, max_dim: 
         im_height, im_width = im.shape[:2]
         r = max_dim / max(im_height, im_width)  # ratio
         if r < 1.0:  # image too large
-            im = cv2.resize(im, (int(im_width * r), int(im_height * r)), interpolation=cv2.INTER_AREA)
+            im = cv2.resize(im, (max(1, int(im_width * r)), max(1, int(im_height * r))), interpolation=cv2.INTER_AREA)
         _replace_image(f_new or f, lambda tmp: cv2.imwrite(tmp, im))
 
 
@@ -987,10 +1001,24 @@ def load_dataset_cache_file(path: Path) -> dict:
         (dict): The loaded cache dictionary.
     """
     import gc
+    import pickle
+
+    safe = {("numpy", "ndarray"), ("numpy", "dtype")}
+    safe |= {(f"numpy.{m}.multiarray", "_reconstruct") for m in ("core", "_core")}  # numpy<2, numpy>=2
+    safe |= {(m, c) for m in ("pathlib", "pathlib._local") for c in ("PosixPath", "WindowsPath")}  # _local: Python 3.13
+
+    class Unpickler(pickle.Unpickler):
+        def find_class(self, module, name):  # rebuild only the numpy arrays and paths that real caches contain
+            if (module, name) in safe:
+                return super().find_class(module, name)
+            raise pickle.UnpicklingError(f"'{module}.{name}' is not allowed in a dataset cache file")
 
     gc.disable()  # reduce pickle load time https://github.com/ultralytics/ultralytics/pull/1585
     try:
-        return np.load(str(path), allow_pickle=True).item()  # load dict
+        with open(path, "rb") as f:
+            fmt = np.lib.format
+            (fmt.read_array_header_1_0 if fmt.read_magic(f) == (1, 0) else fmt.read_array_header_2_0)(f)
+            return Unpickler(f).load().item()  # np.save stores the dict as a pickled 0-d object array
     finally:
         gc.enable()  # also when loading raises, e.g. no cache file yet
 

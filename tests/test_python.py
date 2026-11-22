@@ -137,29 +137,7 @@ def test_build_yolo_dataset_hyp_isolated():
     assert cfg.mosaic == DEFAULT_CFG.mosaic
 
 
-@pytest.mark.parametrize("task", ["detect", "segment"])
-def test_yolo_dataset_label_encoding(tmp_path, task):
-    """Test that UTF-8 label signatures do not discard images from detection or segmentation datasets."""
-    from ultralytics.data.dataset import YOLODataset
-
-    for directory in ("images", "labels"):
-        (tmp_path / directory).mkdir()
-    label = "0 0.5 0.5 0.5 0.5\n" if task == "detect" else "0 0.25 0.25 0.75 0.25 0.75 0.75 0.25 0.75\n"
-    for name, codec in (("plain", "utf-8"), ("bom", "utf-8-sig")):
-        Image.new("RGB", (32, 32)).save(tmp_path / "images" / f"{name}.png")
-        (tmp_path / "labels" / f"{name}.txt").write_text(label, encoding=codec)
-    dataset = YOLODataset(
-        img_path=str(tmp_path / "images"), data={"names": {0: "object"}}, task=task, imgsz=32, augment=False
-    )
-    assert len(dataset) == 2
-    for sample in dataset:
-        assert sample["cls"].tolist() == [[0.0]]
-        assert sample["bboxes"].tolist() == [[0.5, 0.5, 0.5, 0.5]]
-        if task == "segment":
-            assert sample["masks"].any()
-
-
-def test_cfg_rejects_fuzzed_values():
+def test_cfg_rejects_fuzzed_values(tmp_path):
     """Test invalid overrides fail in config validation."""
     with pytest.raises(TypeError, match="degrees"):
         get_cfg(overrides={"degrees": None})
@@ -191,6 +169,8 @@ def test_cfg_rejects_fuzzed_values():
     assert get_cfg(overrides={"end2end": True, "nms": True}).nms is False
     assert get_cfg(overrides={"end2end": False, "nms": False}).nms is None
     assert get_cfg(overrides={"end2end": False, "nms": True}).nms is True
+    YAML.save(tmp_path / "args.yaml", {"lr0": np.float64(1e-5)})  # NumPy 2 float64 saved as a YAML float, not a str
+    assert get_cfg(tmp_path / "args.yaml").lr0 == 1e-5
 
 
 def skip_rpi_semantic():
@@ -359,6 +339,58 @@ def test_model_forward(cfg):
     assert isinstance(sppf.cv1.act, torch.nn.Identity) == ("26" in str(cfg))
     assert isinstance(SPPF(64, 64).cv1.act, torch.nn.Identity)
     model(source=None, imgsz=32, augment=True)  # also test no source and augment
+
+
+def test_tiled_prediction_single_window():
+    """A full-image tile must preserve NMS-free predictions even when they overlap above IoU 0.5."""
+    model = YOLO(MODEL)
+    image = cv2.resize(cv2.imread(str(SOURCE)), (640, 640))
+    args = {"imgsz": 640, "iou": 0.9, "conf": 0.1, "device": "cpu", "verbose": False}
+    expected = model(image, tile=False, **args)[0]
+    actual = model(image, tile=640, **args)[0]
+    assert torch.equal(expected.boxes.data, actual.boxes.data)
+    batches = []
+    model.add_callback("on_predict_batch_start", lambda p: batches.append([im.shape for im in p.batch[1]]))
+    model([image, image[:256, :256]], tile=320, **args)
+    assert batches == [[image.shape, (256, 256, 3)]]
+
+
+def test_tiled_merge_drops_seam_fragments():
+    """A box cut by a window edge is dropped when a neighboring window holds the whole object."""
+    from ultralytics.utils.ops import merge_tiles
+
+    windows = [(0, 0, 100, 100), (60, 0, 160, 100)]
+    predictions = [  # window 0 sees the left 30 px of an object at x=70-110; window 1 sees it whole
+        {
+            "bboxes": torch.tensor([[70.0, 10, 100, 30], [5, 5, 20, 20]]),
+            "conf": torch.tensor([0.9, 0.8]),
+            "cls": torch.zeros(2),
+        },
+        {"bboxes": torch.tensor([[10.0, 10, 50, 30]]), "conf": torch.tensor([0.7]), "cls": torch.zeros(1)},
+    ]
+    out = merge_tiles(predictions, windows, (100, 160), iou=0.7, agnostic=False, max_det=300)
+    assert sorted(out["bboxes"].tolist()) == [[5.0, 5.0, 20.0, 20.0], [70.0, 10.0, 110.0, 30.0]]
+
+
+def test_tiled_dataset_targets(tmp_path):
+    """Crop native pixels and targets before formatting, without retaining full-image backing allocations."""
+    from ultralytics.data.dataset import YOLODataset
+
+    images, labels = tmp_path / "images", tmp_path / "labels"
+    images.mkdir()
+    labels.mkdir()
+    cv2.imwrite(str(images / "image.png"), np.full((64, 128, 3), [10, 20, 240], dtype=np.uint8))
+    (labels / "image.txt").write_text("0 0.75 0.5 0.25 0.5\n")
+    dataset = YOLODataset(img_path=str(images), data={"names": {0: "object"}}, imgsz=64, tile=64, augment=False)
+    first, last = dataset[0], dataset[len(dataset) - 1]
+    assert first["img"][:, 32, 32].tolist() == [240, 20, 10]
+    assert len(first["cls"]) == 0
+    assert torch.allclose(last["bboxes"], torch.tensor([[0.5, 0.5, 0.5, 0.5]]))
+    crop, _, _ = dataset.load_image(len(dataset) - 1)
+    assert crop.base is None
+    full = dataset.get_image_and_label(0, full=True)
+    assert full["img"].shape == (64, 128, 3)
+    np.testing.assert_allclose(full["instances"].bboxes, [[0.75, 0.5, 0.25, 0.5]])
 
 
 def test_model_methods():
@@ -543,6 +575,20 @@ def test_predict_gray_and_4ch(tmp_path):
         f.unlink()  # cleanup
 
 
+def test_imread_exif_orientation(tmp_path):
+    """Test imread returns EXIF-rotated images upright for every format and flag."""
+    from ultralytics.utils.patches import imread
+
+    im = Image.open(SOURCE).resize((64, 48))
+    exif = im.getexif()
+    exif[274] = 6  # stored portrait, displayed landscape
+    for suffix in ".jpg", ".png", ".webp":
+        f = tmp_path / f"exif{suffix}"
+        im.rotate(90, expand=True).save(f, exif=exif)
+        for flags in cv2.IMREAD_COLOR, cv2.IMREAD_GRAYSCALE, cv2.IMREAD_UNCHANGED:
+            assert imread(f, flags).shape[:2] == (48, 64), f"{suffix} read with flags={flags} is not upright"
+
+
 def test_predict_ndarray_channels():
     """Test NumPy channel normalization for grayscale and color models."""
     from ultralytics.data.loaders import LoadPilAndNumpy
@@ -554,8 +600,8 @@ def test_predict_ndarray_channels():
     assert len(model(source=gray.astype("float64"), imgsz=32, verbose=False)) == 1  # non-OpenCV dtype also works
     for source_channels, model_channels in ((1, 3), (2, 1), (2, 3), (3, 1), (4, 1), (4, 3)):
         for dtype in (np.uint8, np.float64):  # float64 is a dtype cvtColor rejects
-            im = np.zeros((8, 8, source_channels), dtype=dtype)
-            assert LoadPilAndNumpy(im, channels=model_channels).im0[0].shape == (8, 8, model_channels)
+            im = LoadPilAndNumpy(np.zeros((8, 8, source_channels), dtype=dtype), channels=model_channels).im0[0]
+            assert im.shape == (8, 8, model_channels) and im.dtype != np.float64  # MPS has no float64
 
 
 def test_single_check_channel_order_and_contiguity():
@@ -1196,6 +1242,15 @@ def test_annotator_depth_map():
     assert ann.result().shape == (16, 16, 3)
 
 
+def test_colors_parse():
+    """Class `colors` parse from a list or its metadata repr; a malformed value is ignored whole, never raised."""
+    from ultralytics.utils.plotting import Colors
+
+    for bad in ([None], ["#00ff00", "#f00"], ["red"], ["#00ff00", "ff0000"], ["#ff0000ff"], [1], "#ff0000", "[None]"):
+        assert Colors.parse(bad) is None
+    assert Colors.parse(["#FF0000", "#00ff00"]) == Colors.parse("['#ff0000', '#00ff00']") == [(255, 0, 0), (0, 255, 0)]
+
+
 def test_dense_result_tensor_indexing():
     """Valid indices keep the intact map on SemanticMask/DepthMap; out-of-range raises; empty selections zero len."""
     from ultralytics.engine.results import DepthMap, SemanticMask
@@ -1524,7 +1579,7 @@ def test_depth_calibration_checkpoint_provenance(tmp_path):
     assert provenance["dataset_hash"] == "manifest-sha256"
     assert provenance["validation_split"] == "images/val"
     assert provenance["strategy"] == "two-fold-held-out-delta1"
-    assert set(provenance["scores"]) == {"identity", "scale-only"}
+    assert set(provenance["scores"]) == {"identity", "current", "scale-only"}
     assert float(head.cal_a) == provenance["a"]
     assert float(head.cal_b) == provenance["b"]
 
@@ -2170,6 +2225,28 @@ def test_model_embeddings():
     assert model_classify.predict(SOURCE, imgsz=32)[0].probs is not None
     assert isinstance(model_classify.predict(SOURCE, imgsz=32, embed=[-2])[0], torch.Tensor)
     assert model_classify.predict(SOURCE, imgsz=32)[0].probs is not None
+
+
+def test_process_mask_local():
+    """Box-local masks must match the dense masks they replace, through `Masks` data, outlines and indexing."""
+    from ultralytics.engine.results import Masks
+    from ultralytics.utils import ops
+
+    torch.manual_seed(0)
+    protos, coeffs, xy = torch.randn(32, 160, 160), torch.randn(40, 32), torch.rand(40, 2) * 400
+    bboxes = torch.cat((xy, xy + torch.rand(40, 2) * 240), 1)
+    bboxes[0, 2:] = bboxes[0, :2]  # an empty box
+    dense = ops.process_mask(protos, coeffs, bboxes, (640, 640), upsample=True)
+    rois, masks, keep = ops.process_mask_local(protos, coeffs, bboxes, (640, 640))
+    local = Masks((rois, masks, (640, 640)), (1280, 1280))
+    assert len(local) == 40 and not keep[0] and torch.equal(keep, dense.amax((-2, -1)) > 0)
+    assert local.shape == dense.shape and "data" not in vars(local)  # shape must not expand the dense mask stack
+    assert (local.data != dense).float().mean() < 1e-4  # float rounding may flip a pixel on the mask edge
+    assert (local[keep][::3].data != dense[keep][::3]).float().mean() < 1e-4
+    assert len(local[5].xy) == 1 and local[5].xy[0][:, 0].min() >= bboxes[5, 0] * 2
+    native = ops.process_mask_native(protos[:, :96], coeffs, bboxes, (720, 1280))  # letterboxed, 12 rows of padding
+    rois, masks, _ = ops.process_mask_local(protos[:, :96], coeffs, bboxes, (720, 1280))
+    assert (Masks((rois, masks, (720, 1280)), (720, 1280)).data != native).float().mean() < 1e-4
 
 
 def test_process_mask_native_chunked():

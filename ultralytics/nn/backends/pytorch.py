@@ -67,6 +67,7 @@ class PyTorchBackend(BaseBackend):
             self.kpt_shape = model.kpt_shape
         self.stride = max(int(model.stride.max()), 32) if hasattr(model, "stride") else 32
         self.names = model.module.names if hasattr(model, "module") else getattr(model, "names", {})
+        self.colors = getattr(model, "colors", None)
         self.channels = model.yaml.get("channels", 3) if hasattr(model, "yaml") else 3
         model.half() if self.fp16 else model.float()
 
@@ -117,7 +118,8 @@ class TorchScriptBackend(BaseBackend):
         # forwards, and the optimization it disables is the broken one on these versions.
         if TORCH_1_10 and not TORCH_2_1:
             torch._C._jit_set_texpr_fuser_enabled(False)
-        self.model = torch.jit.load(weight, map_location=self.device)
+        # torch>=2.16 removes the public torch.jit.load alias (pytorch/pytorch#203621); every torch defines it here
+        self.model = torch.jit._serialization.load(weight, map_location=self.device)
         self.model.half() if self.fp16 else self.model.float()
         self.apply_metadata(self.read_metadata(weight))
 

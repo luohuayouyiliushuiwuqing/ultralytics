@@ -1,17 +1,17 @@
 ---
 plans: [free, pro, enterprise]
-title: Inference API Testing
+title: Test YOLO Model Inference in the Browser and via API
 comments: true
-description: Learn how to test YOLO models with the Ultralytics Platform inference API including browser testing and programmatic access.
-keywords: Ultralytics Platform, inference, API, YOLO, object detection, prediction, testing
+description: Test YOLO model inference in the Ultralytics Platform Predict tab on images, PDFs, or webcam, then call shared or dedicated endpoints over REST.
+keywords: Ultralytics Platform, YOLO inference, inference API, predict, object detection, prediction, testing, PDF, webcam
 ---
 
-# Inference
+# YOLO Model Inference
 
-[Ultralytics Platform](https://platform.ultralytics.com) provides browser-based inference for testing trained models
-and dedicated endpoints for programmatic access.
+[Ultralytics Platform](https://platform.ultralytics.com) lets you test a trained YOLO model on your own images from its
+`Predict` tab, then call it over REST from shared or dedicated endpoints.
 
-![Ultralytics Platform Model Predict Tab With Detections Overlay](https://cdn.ul.run/i/26f355aa5ed21d09b66d86fcf7fd1642.avif)<!-- screenshot -->
+![Ultralytics Platform Model Predict Tab With Detections Overlay](https://cdn.ul.run/i/563ca77d653d3486e8bf796e3c42016f.avif)<!-- screenshot -->
 
 ## Predict Tab
 
@@ -24,7 +24,7 @@ Every model with weights includes a `Predict` tab for browser-based inference:
 
 Models without weights show an empty state instead — train the model or upload weights first.
 
-![Ultralytics Platform Predict Tab Image Upload Dropzone](https://cdn.ul.run/i/2b0e88766b66799a0e0f11f6cf83e1ec.avif)<!-- screenshot -->
+![Ultralytics Platform Predict Tab Image Upload Dropzone](https://cdn.ul.run/i/d6707bfab821116f76af77008cc0cbea.avif)<!-- screenshot -->
 
 ### Input Methods
 
@@ -32,7 +32,7 @@ The predict panel supports multiple input methods:
 
 | Method             | Description                                          |
 | ------------------ | ---------------------------------------------------- |
-| **Image upload**   | Drag and drop or click to upload an image            |
+| **Image upload**   | Drag and drop or click to upload an image or a PDF   |
 | **Example images** | Click built-in examples (dataset images or defaults) |
 | **Webcam capture** | Live camera feed with single-frame capture           |
 | **IP camera**      | RTSP or RTSPS stream on your own deployment          |
@@ -49,7 +49,7 @@ flowchart TD
 
 Drag and drop or click to upload:
 
-- **Supported formats**: JPEG, PNG, WebP, AVIF, HEIC, JP2, TIFF, BMP
+- **Supported formats**: JPEG, PNG, WebP, AVIF, HEIC, JP2, TIFF, BMP, and PDF (the first page is rendered as an image and predicted like one)
 - **Max size**: 10 MB
 - **Auto-inference**: Results appear automatically after upload
 
@@ -59,11 +59,11 @@ Drag and drop or click to upload:
 
 !!! note "Client-Side Resize"
 
-    Before uploading, the panel resizes the image so its longest side matches the selected `Image Size`, and requests normalized coordinates. This keeps browser testing fast; requests you send yourself are not resized.
+    Before uploading, the panel shrinks images whose longest side exceeds the selected `Image Size` to that size, sends a JPEG instead of the original when that is smaller (a PNG screenshot, for example), and requests normalized coordinates. This keeps browser testing fast; requests you send yourself are not resized. Formats the browser can't display itself, such as iPhone HEIC photos or TIFF in Chrome, are converted in the browser, so they preview like any other image and are resized the same way. HEIC, HEIF, and BMP are always sent as JPEG.
 
 ### Example Images
 
-The predict panel shows up to two example images from your model's linked dataset, preferring the `val` split, then
+The predict panel shows up to four example images from your model's linked dataset, preferring the `val` split, then
 `test`, then `train`. If no dataset is linked, default examples are used:
 
 | Image        | Content                    |
@@ -95,7 +95,7 @@ Inference results display the output appropriate to the model task: boxes, masks
 classification scores, semantic coverage, or a depth map. Object results use the dataset class colors when available.
 The panel also shows preprocess, inference, postprocess, and network timing.
 
-![Ultralytics Platform Predict Tab Results With Detections And Speed Stats](https://cdn.ul.run/i/d404d43d1aec0a3b4e4536283b2312cc.avif)<!-- screenshot -->
+![Ultralytics Platform Predict Tab Results With Detections And Speed Stats](https://cdn.ul.run/i/0b6527198496efaf3909937fba1b546e.avif)<!-- screenshot -->
 
 The results panel shows:
 
@@ -109,16 +109,24 @@ The results panel shows:
 Two controls sit over the preview once results are in: click the image to enlarge it with overlays intact, and use the
 download button to save an annotated JPEG of the current result.
 
+Hover a detection's row to highlight its box, or hover a box on the image to highlight its row and scroll it into view
+in the list. With more than 10 results, the image shows boxes without labels so labels don't cover the objects; the
+list names each result, and the enlarged image keeps the labels. On wide screens the results card can grow up to the
+height of the input card, so long lists, such as a crowded retail shelf, stay readable.
+
+A model's Predict tab returns up to 1,000 results per image. RT-DETR models return at most 300, the number of queries in
+their decoder.
+
 ## Inference Parameters
 
 Adjust inference behavior with the three sliders below the image (depth models show only **Image Size**):
 
-![Ultralytics Platform Predict Tab Parameters Sliders](https://cdn.ul.run/i/03d15a005d5010026a35c8011406d520.avif)<!-- screenshot -->
+![Ultralytics Platform Predict Tab Parameters Sliders](https://cdn.ul.run/i/f0d05f100408a6e5fc4fb6496ed9615d.avif)<!-- screenshot -->
 
 | Parameter      | Range                     | Default | Description                  |
 | -------------- | ------------------------- | ------- | ---------------------------- |
 | **Confidence** | 0.01 – 1.0, steps of 0.01 | 0.25    | Minimum confidence threshold |
-| **IoU**        | 0.0 – 0.95, steps of 0.01 | 0.7     | NMS IoU threshold            |
+| **IoU**        | 0.0 – 0.95, steps of 0.01 | 0.5     | NMS IoU threshold            |
 | **Image Size** | 32 – 1280, steps of 32    | 640     | Input resize dimension       |
 
 !!! note "Auto-Rerun"
@@ -127,7 +135,7 @@ Adjust inference behavior with the three sliders below the image (depth models s
 
 ### Confidence Threshold
 
-Filter predictions by confidence:
+Filter predictions by [confidence](https://www.ultralytics.com/glossary/confidence) score:
 
 - **Higher (0.5+)**: Fewer, more certain predictions
 - **Lower (0.1-0.25)**: More predictions, some noise
@@ -135,11 +143,11 @@ Filter predictions by confidence:
 
 ### IoU Threshold
 
-Control Non-Maximum Suppression:
+Control [Non-Maximum Suppression (NMS)](https://www.ultralytics.com/glossary/non-maximum-suppression-nms), which removes boxes whose [Intersection over Union (IoU)](https://www.ultralytics.com/glossary/intersection-over-union-iou) with a higher-confidence box exceeds this threshold:
 
-- **Higher (0.7+)**: Allow more overlapping boxes
-- **Lower (0.3-0.5)**: Suppress overlapping detections more aggressively
-- **Default (0.7)**: Balanced NMS behavior for most use cases
+- **Higher (0.6+)**: Allow more overlapping boxes
+- **Lower (0.3-0.4)**: Suppress overlapping detections more aggressively
+- **Default (0.5)**: Balanced NMS behavior for most use cases
 
 ## Deployment Predict
 
@@ -170,7 +178,7 @@ after you disconnect or close the page. Once the connected camera shows results,
 background**. The deployment header shows **Camera on**, and results go to the
 [Monitoring tab](monitoring.md#monitoring-tab) as temporary examples and prediction statistics.
 
-- **Settings:** The background camera always uses the default confidence (0.25), IoU (0.7), and the model's training
+- **Settings:** The background camera always uses the default confidence (0.25), IoU (0.5), and the model's training
   image size; the sliders do not apply to it.
 - **Cost:** It runs on the endpoint's warm instance at no extra charge; the hourly uptime rate applies whether the
   camera is on or off.
@@ -218,7 +226,7 @@ key, ready to copy and run.
 
 Include your API key in requests:
 
-```bash
+```http
 Authorization: Bearer YOUR_API_KEY
 ```
 
@@ -263,7 +271,7 @@ with open("image.jpg", "rb") as f:
 
     url = "https://YOUR_DEPLOYMENT_URL.run.app/predict"
     headers = {"Authorization": "Bearer YOUR_API_KEY"}
-    data = {"conf": 0.25, "iou": 0.7, "imgsz": 640}
+    data = {"conf": 0.25, "iou": 0.5, "imgsz": 640}
 
     with open("image.jpg", "rb") as image_file:
         response = requests.post(url, headers=headers, files={"file": image_file}, data=data)
@@ -278,7 +286,7 @@ with open("image.jpg", "rb") as f:
       -H "Authorization: Bearer YOUR_API_KEY" \
       -F "file=@image.jpg" \
       -F "conf=0.25" \
-      -F "iou=0.7" \
+      -F "iou=0.5" \
       -F "imgsz=640"
     ```
 
@@ -288,7 +296,7 @@ with open("image.jpg", "rb") as f:
     const formData = new FormData();
     formData.append("file", fileInput.files[0]);
     formData.append("conf", "0.25");
-    formData.append("iou", "0.7");
+    formData.append("iou", "0.5");
     formData.append("imgsz", "640");
 
     const response = await fetch(
@@ -304,7 +312,7 @@ with open("image.jpg", "rb") as f:
     console.log(result);
     ```
 
-![Ultralytics Platform Predict Tab Code Examples Python Tab](https://cdn.ul.run/i/80c9a77ce7d40e67c8ccfc7871addb85.avif)<!-- screenshot -->
+![Ultralytics Platform Predict Tab Code Examples Python Tab](https://cdn.ul.run/i/b73b37203502202ec46c6a4622880e89.avif)<!-- screenshot -->
 
 ### Request Parameters
 
@@ -340,7 +348,6 @@ with open("image.jpg", "rb") as f:
     ],
     "metadata": {
         "imageCount": 1,
-        "classNames": ["person", "bicycle", "car", "..."],
         "functionTimeAlive": 1284.51,
         "functionTimeCall": 0.018,
         "task": "detect",
@@ -354,23 +361,23 @@ with open("image.jpg", "rb") as f:
 }
 ```
 
-![Ultralytics Platform Predict Tab Json Response View](https://cdn.ul.run/i/23001d947c672836bf74347a0fadc8c1.avif)<!-- screenshot -->
+![Ultralytics Platform Predict Tab Json Response View](https://cdn.ul.run/i/c029c742eca35e11a8cb8297892c5b0e.avif)<!-- screenshot -->
 
 ### Response Fields
 
-| Field                           | Type   | Description                                                         |
-| ------------------------------- | ------ | ------------------------------------------------------------------- |
-| `images`                        | array  | List of processed images, one entry per processed video frame       |
-| `images[].shape`                | array  | Image dimensions [height, width]                                    |
-| `images[].results`              | array  | List of detections                                                  |
-| `images[].results[].class`      | int    | Class index (integer ID)                                            |
-| `images[].results[].name`       | string | Class name                                                          |
-| `images[].results[].confidence` | float  | Detection confidence (0-1)                                          |
-| `images[].results[].box`        | object | Bounding box coordinates                                            |
-| `images[].semantic_mask`        | object | Per-pixel class map (semantic models only)                          |
-| `images[].depth`                | object | Per-pixel depth map (depth models only)                             |
-| `images[].speed`                | object | Processing times in milliseconds                                    |
-| `metadata`                      | object | Image count, model class names, service timings, task, and versions |
+| Field                           | Type   | Description                                                   |
+| ------------------------------- | ------ | ------------------------------------------------------------- |
+| `images`                        | array  | List of processed images, one entry per processed video frame |
+| `images[].shape`                | array  | Image dimensions [height, width]                              |
+| `images[].results`              | array  | List of detections                                            |
+| `images[].results[].class`      | int    | Class index (integer ID)                                      |
+| `images[].results[].name`       | string | Class name                                                    |
+| `images[].results[].confidence` | float  | Detection confidence (0-1)                                    |
+| `images[].results[].box`        | object | Bounding box coordinates                                      |
+| `images[].semantic_mask`        | object | Per-pixel class map (semantic models only)                    |
+| `images[].depth`                | object | Per-pixel depth map (depth models only)                       |
+| `images[].speed`                | object | Processing times in milliseconds                              |
+| `metadata`                      | object | Image count, service timings, task, and versions              |
 
 ### Task-Specific Responses
 
@@ -560,10 +567,8 @@ See the [Predict mode documentation](../../modes/predict.md) for the full result
 - **Predict tab limit**: 10 MB
 - **Shared inference API limit**: about 4.5 MB per request, including through the Python SDK
 - **Dedicated endpoint limit**: 32 MB per request sent directly to the endpoint URL
-- **Auto-resize in the Predict tab**: Images are resized to the selected `Image Size` before upload
 
-Large images are automatically resized in the browser while preserving aspect ratio. Requests you send yourself are not
-resized, so requests above the limit are rejected with `413`.
+Images whose longest side exceeds the selected `Image Size` are shrunk in the browser while preserving aspect ratio, unless the browser cannot decode them ([Upload Image](#upload-image)). Requests you send yourself are not resized, so requests above the limit are rejected with `413`.
 
 ### Can I run batch inference?
 
@@ -571,7 +576,7 @@ The current API processes one image per request. For batch:
 
 1. Send separate requests for each image
 2. Distribute requests across dedicated endpoints when appropriate
-3. Use local inference for large batches
+3. Use [local inference for large batches](https://www.ultralytics.com/blog/using-ultralytics-yolo11-to-run-batch-inferences)
 
 !!! example "Batch Inference with Python"
 

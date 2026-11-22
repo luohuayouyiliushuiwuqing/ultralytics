@@ -14,6 +14,7 @@ import torch
 
 from ultralytics.utils import LOGGER, DataExportMixin, SimpleClass, TryExcept, checks, plt_settings
 from ultralytics.utils.plotting import colors
+from ultralytics.utils.torch_utils import autocast
 
 OKS_SIGMA = (
     np.array(
@@ -187,7 +188,10 @@ def mask_iou(mask1: torch.Tensor, mask2: torch.Tensor, eps: float = 1e-7) -> tor
     Returns:
         (torch.Tensor): A tensor of shape (N, M) representing masks IoU.
     """
-    intersection = torch.matmul(mask1, mask2.T).clamp_(0)
+    dtype = torch.promote_types(torch.promote_types(mask1.dtype, mask2.dtype), torch.float32)
+    mask1, mask2 = mask1.to(dtype), mask2.to(dtype)  # avoid integer wrap and FP16 overflow
+    with autocast(False, device=mask1.device.type):
+        intersection = torch.matmul(mask1, mask2.T).clamp_(0)
     union = (mask1.sum(1)[:, None] + mask2.sum(1)[None]) - intersection  # (area1 + area2) - intersection
     return intersection / (union + eps)
 
@@ -409,7 +413,7 @@ class ConfusionMatrix(DataExportMixin):
         detections: dict[str, torch.Tensor],
         batch: dict[str, Any],
         conf: float = 0.25,
-        iou_thres: float = 0.45,
+        iou_thres: float = 0.5,
     ) -> None:
         """Update confusion matrix for object detection task.
 
@@ -420,8 +424,13 @@ class ConfusionMatrix(DataExportMixin):
             batch (dict[str, Any]): Batch dictionary containing ground truth data with 'bboxes' (Array[M, 4]| Array[M,
                 5]) and 'cls' (Array[M]) keys, where M is the number of ground truth objects.
             conf (float, optional): Confidence threshold for detections.
-            iou_thres (float, optional): IoU threshold for matching detections to ground truth. This is a matching
-                threshold, not the NMS `iou` argument, and the detection validator uses this 0.45 default.
+            iou_thres (float, optional): IoU threshold for matching detections to ground truth, the same criterion as
+                mAP50. This is a matching threshold, not the NMS `iou` argument.
+
+        Notes:
+            Matching is greedy and one-to-one: each detection claims its best unclaimed ground truth above
+            `iou_thres` in descending confidence order, the same policy the detection validator applies, but
+            class-agnostic so cross-class confusions are still counted.
         """
         gt_cls, gt_bboxes = batch["cls"], batch["bboxes"]
         if self.matches is not None:  # only if visualization is enabled
@@ -451,22 +460,15 @@ class ConfusionMatrix(DataExportMixin):
         bboxes = detections["bboxes"]
         iou = batch_probiou(gt_bboxes, bboxes) if is_obb else box_iou(gt_bboxes, bboxes)
 
-        x = torch.where(iou > iou_thres)
-        if x[0].shape[0]:
-            matches = torch.cat((torch.stack(x, 1), iou[x[0], x[1]][:, None]), 1).cpu().numpy()
-            if x[0].shape[0] > 1:
-                matches = matches[matches[:, 2].argsort()[::-1]]
-                matches = matches[np.unique(matches[:, 1], return_index=True)[1]]
-                matches = matches[matches[:, 2].argsort()[::-1]]
-                matches = matches[np.unique(matches[:, 0], return_index=True)[1]]
-        else:
-            matches = np.zeros((0, 3))
-
-        m0, m1, _ = matches.transpose().astype(int)
-        # matches is deduplicated on both columns, so each gt and each detection appears at most once
+        iou = iou.cpu().numpy()
         gt_match = np.full(len(gt_classes), -1)
-        gt_match[m0] = m1
-        matched_det = set(m1.tolist())
+        candidates = np.flatnonzero((iou > iou_thres).any(0))
+        for det_idx in candidates[np.argsort(-detections["conf"].cpu().numpy()[candidates], kind="stable")]:
+            gt_idx = iou[:, det_idx].argmax()
+            if iou[gt_idx, det_idx] > iou_thres:
+                gt_match[gt_idx] = det_idx
+                iou[gt_idx] = 0
+        matched_det = set(gt_match[gt_match >= 0].tolist())
         for i, gc in enumerate(gt_classes):
             if (di := gt_match[i].item()) >= 0:
                 dc = detection_classes[di]
@@ -559,10 +561,10 @@ class ConfusionMatrix(DataExportMixin):
         names, n = list(self.names.values()), self.nc
         if self.nc >= 100:  # downsample for large class count
             k = max(2, self.nc // 60)  # step size for downsampling, always > 1
-            keep_idx = slice(None, None, k)  # create slice instead of array
-            names = names[keep_idx]  # slice class names
-            array = array[keep_idx, :][:, keep_idx]  # slice matrix rows and cols
-            n = (self.nc + k - 1) // k  # number of retained classes
+            keep_idx = np.r_[0 : self.nc : k, self.nc : len(array)]  # every k-th class plus any background row/col
+            names = names[::k]  # slice class names
+            array = array[np.ix_(keep_idx, keep_idx)]  # slice matrix rows and cols
+            n = len(names)  # number of retained classes
         nc = n if self.task in {"classify", "semantic"} else n + 1  # adjust for background if needed
         ticklabels = "auto"
         if 0 < nc < 99:
@@ -687,7 +689,7 @@ def plot_pr_curve(
     Args:
         px (np.ndarray): Recall values (x-axis) for the PR curve, shape (1000,).
         py (np.ndarray): Precision values for each class, shape (nc, 1000).
-        ap (np.ndarray): Average precision values, shape (nc, 10); the first column (mAP@0.5) is shown.
+        ap (np.ndarray): Average precision values, shape (nc, 10); the first column (mAP50) is shown.
         save_dir (Path, optional): Path to save the plot.
         names (dict[int, str], optional): Dictionary mapping class indices to class names.
         on_plot (callable, optional): Function to call after plot is saved.
@@ -704,7 +706,7 @@ def plot_pr_curve(
     else:
         ax.plot(px, py, linewidth=1, color="gray")  # plot(recall, precision)
 
-    ax.plot(px, py.mean(1), linewidth=3, color="blue", label=f"all classes {ap[:, 0].mean():.3f} mAP@0.5")
+    ax.plot(px, py.mean(1), linewidth=3, color="blue", label=f"all classes {ap[:, 0].mean():.3f} mAP50")
     ax.set_xlabel("Recall")
     ax.set_ylabel("Precision")
     ax.set_xlim(0, 1)
@@ -766,6 +768,10 @@ def plot_mc_curve(
         on_plot(save_dir, {"type": f"{ylabel.lower()}_curve", "x": px.tolist(), "y": py.tolist()})
 
 
+_AP_X = np.linspace(0, 1, 101)  # 101-point interp (COCO), constant across compute_ap calls
+_TRAPZ = np.trapezoid if checks.check_version(np.__version__, ">=2.0") else np.trapz  # np.trapz deprecated
+
+
 def compute_ap(recall: list[float], precision: list[float]) -> tuple[float, np.ndarray, np.ndarray]:
     """Compute the average precision (AP) given the recall and precision curves.
 
@@ -785,15 +791,7 @@ def compute_ap(recall: list[float], precision: list[float]) -> tuple[float, np.n
     # Compute the precision envelope
     mpre = np.flip(np.maximum.accumulate(np.flip(mpre)))
 
-    # Integrate area under curve
-    method = "interp"  # methods: 'continuous', 'interp'
-    if method == "interp":
-        x = np.linspace(0, 1, 101)  # 101-point interp (COCO)
-        func = np.trapezoid if checks.check_version(np.__version__, ">=2.0") else np.trapz  # np.trapz deprecated
-        ap = func(np.interp(x, mrec, mpre), x)  # integrate
-    else:  # 'continuous'
-        i = np.where(mrec[1:] != mrec[:-1])[0]  # points where x-axis (recall) changes
-        ap = np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1])  # area under curve
+    ap = _TRAPZ(np.interp(_AP_X, mrec, mpre), _AP_X)  # 101-point interpolation (COCO)
 
     return ap, mpre, mrec
 
@@ -876,20 +874,20 @@ def ap_per_class(
         for j in range(tp.shape[1]):
             ap[ci, j], mpre, mrec = compute_ap(recall[:, j], precision[:, j])
             if j == 0:
-                prec_values.append(np.interp(x, mrec, mpre))  # precision at mAP@0.5
+                prec_values.append(np.interp(x, mrec, mpre))  # precision at mAP50
 
     prec_values = np.array(prec_values) if prec_values else np.zeros((1, 1000))  # (nc, 1000)
 
     # Compute F1 (harmonic mean of precision and recall)
     f1_curve = 2 * p_curve * r_curve / (p_curve + r_curve + eps)
     names = {i: names[k] for i, k in enumerate(unique_classes) if k in names}  # dict: only classes that have data
-    if plot:
+    if plot and nc:
         plot_pr_curve(x, prec_values, ap, save_dir / f"{prefix}PR_curve.png", names, on_plot=on_plot)
         plot_mc_curve(x, f1_curve, save_dir / f"{prefix}F1_curve.png", names, ylabel="F1", on_plot=on_plot)
         plot_mc_curve(x, p_curve, save_dir / f"{prefix}P_curve.png", names, ylabel="Precision", on_plot=on_plot)
         plot_mc_curve(x, r_curve, save_dir / f"{prefix}R_curve.png", names, ylabel="Recall", on_plot=on_plot)
 
-    i = smooth(f1_curve.mean(0), 0.1).argmax()  # max F1 index
+    i = smooth(f1_curve.mean(0), 0.1).argmax() if nc else 0  # max F1 index
     p, r, f1 = p_curve[:, i], r_curve[:, i], f1_curve[:, i]  # max-F1 precision, recall, F1 values
     tp = (r * nt).round()  # true positives
     fp = (tp / (p + eps) - tp).round()  # false positives
@@ -906,7 +904,7 @@ class Metric(SimpleClass):
         all_ap (list): AP scores for all classes and all IoU thresholds. Shape: (nc, 10).
         ap_class_index (list): Index of class for each AP score. Shape: (nc,).
         nc (int): Number of classes.
-        image_metrics (dict[str, dict]): Per-image precision, recall, F1, TP, FP, and FN keyed by image name.
+        image_metrics (dict[str, dict]): Per-image precision, recall, F1, TP, FP, and FN keyed by image path.
 
     Methods:
         ap50: AP at IoU threshold of 0.5 for all classes.
@@ -1016,7 +1014,7 @@ class Metric(SimpleClass):
 
     def fitness(self) -> float:
         """Return model fitness as a weighted combination of metrics."""
-        w = [0.0, 0.0, 0.0, 1.0]  # weights for [P, R, mAP@0.5, mAP@0.5:0.95]
+        w = [0.0, 0.0, 0.0, 1.0]  # weights for [P, R, mAP50, mAP50-95]
         return float((np.nan_to_num(np.array(self.mean_results())) * w).sum())
 
     def update(self, results: tuple):
@@ -1075,7 +1073,7 @@ class Metric(SimpleClass):
                 >= 0.5) is used.
             target_cls (np.ndarray): Ground truth class labels for the image.
             pred_cls (np.ndarray): Predicted class labels for the image.
-            im_name (str): The image filename used as the per-image key.
+            im_name (str): Image path relative to the common image directory.
         """
         # Use the default IoU=0.5 column to match the validator's image-level matching policy.
         tp = int(tp[:, 0].sum())
@@ -1268,15 +1266,35 @@ class DetMetrics(SimpleClass, DataExportMixin):
         return [
             {
                 "Class": self.names[self.ap_class_index[i]],
-                "Images": self.nt_per_image[self.ap_class_index[i]],
-                "Instances": self.nt_per_class[self.ap_class_index[i]],
-                **{k: round(v[i], decimals) for k, v in per_class.items()},
-                "mAP50": round(self.class_result(i)[2], decimals),
-                "mAP75": round(self.box.all_ap[i, 5], decimals),
-                "mAP50-95": round(self.class_result(i)[3], decimals),
+                "Images": int(self.nt_per_image[self.ap_class_index[i]]),
+                "Instances": int(self.nt_per_class[self.ap_class_index[i]]),
+                **{k: float(round(v[i], decimals)) for k, v in per_class.items()},
+                "mAP50": float(round(self.class_result(i)[2], decimals)),
+                "mAP75": float(round(self.box.all_ap[i, 5], decimals)),
+                "mAP50-95": float(round(self.class_result(i)[3], decimals)),
             }
             for i in range(len(per_class["Box-P"]))
         ]
+
+    def _task_summary(self, prefix: str, metric: Metric, normalize: bool, decimals: int) -> list[dict[str, Any]]:
+        """Extend the box summary rows with per-class P, R, F1, mAP50, mAP75, and mAP50-95 of a task metric.
+
+        Args:
+            prefix (str): Column name prefix for the task metric, e.g. "Mask" or "Pose".
+            metric (Metric): Task metric whose per-class values are appended to each row.
+            normalize (bool): Passed through to the box summary.
+            decimals (int): Number of decimal places to round the metrics values to.
+
+        Returns:
+            (list[dict[str, Any]]): Box summary rows extended with the prefixed task metric columns.
+        """
+        keys = ("P", "R", "F1", "mAP50", "mAP75", "mAP50-95")
+        summary = DetMetrics.summary(self, normalize, decimals)  # get box summary
+        for i, s in enumerate(summary):
+            ap = metric.all_ap[i]
+            values = (metric.p[i], metric.r[i], metric.f1[i], ap[0], ap[5], ap.mean())
+            s.update({f"{prefix}-{k}": float(round(v, decimals)) for k, v in zip(keys, values)})
+        return summary
 
 
 class SegmentMetrics(DetMetrics):
@@ -1404,7 +1422,7 @@ class SegmentMetrics(DetMetrics):
     def summary(self, normalize: bool = True, decimals: int = 5) -> list[dict[str, Any]]:
         """Generate a summarized representation of per-class segmentation metrics as a list of dictionaries.
 
-        Extends the box summary rows with mask precision, recall, and F1-score for each class.
+        Extends the box summary rows with mask precision, recall, F1-score, mAP50, mAP75, and mAP50-95 for each class.
 
         Args:
             normalize (bool): For Segment metrics, everything is normalized by default [0-1].
@@ -1421,15 +1439,7 @@ class SegmentMetrics(DetMetrics):
             >>> seg_summary = results.summary(decimals=4)
             >>> print(seg_summary)
         """
-        per_class = {
-            "Mask-P": self.seg.p,
-            "Mask-R": self.seg.r,
-            "Mask-F1": self.seg.f1,
-        }
-        summary = DetMetrics.summary(self, normalize, decimals)  # get box summary
-        for i, s in enumerate(summary):
-            s.update({**{k: round(v[i], decimals) for k, v in per_class.items()}})
-        return summary
+        return self._task_summary("Mask", self.seg, normalize, decimals)
 
 
 class PoseMetrics(DetMetrics):
@@ -1557,7 +1567,7 @@ class PoseMetrics(DetMetrics):
     def summary(self, normalize: bool = True, decimals: int = 5) -> list[dict[str, Any]]:
         """Generate a summarized representation of per-class pose metrics as a list of dictionaries.
 
-        Extends the box summary rows with pose precision, recall, and F1-score for each class.
+        Extends the box summary rows with pose precision, recall, F1-score, mAP50, mAP75, and mAP50-95 for each class.
 
         Args:
             normalize (bool): For Pose metrics, everything is normalized by default [0-1].
@@ -1574,15 +1584,7 @@ class PoseMetrics(DetMetrics):
             >>> pose_summary = results.summary(decimals=4)
             >>> print(pose_summary)
         """
-        per_class = {
-            "Pose-P": self.pose.p,
-            "Pose-R": self.pose.r,
-            "Pose-F1": self.pose.f1,
-        }
-        summary = DetMetrics.summary(self, normalize, decimals)  # get box summary
-        for i, s in enumerate(summary):
-            s.update({**{k: round(v[i], decimals) for k, v in per_class.items()}})
-        return summary
+        return self._task_summary("Pose", self.pose, normalize, decimals)
 
 
 class ClassifyMetrics(SimpleClass, DataExportMixin):
@@ -1737,14 +1739,14 @@ class SemanticMetrics(SimpleClass, DataExportMixin):
             self.matrix = torch.zeros((self.cm_nc, self.cm_nc), device=preds.device, dtype=torch.float32)
 
         valid = (targets != 255) & (preds >= 0) & (preds < self.cm_nc) & (targets >= 0) & (targets < self.cm_nc)
-        idx = (self.cm_nc * targets[valid] + preds[valid]).long()
+        idx = self.cm_nc * targets[valid].long() + preds[valid]
         for i in idx.split(1 << 24):  # float32 counts are exact up to 2**24 per chunk; bincount is very slow on MPS
             hist = torch.zeros(self.cm_nc**2, device=i.device, dtype=self.matrix.dtype)
             self.matrix += hist.scatter_add_(0, i, torch.ones_like(i, dtype=hist.dtype)).view_as(self.matrix)
 
         present = torch.zeros((targets.shape[0], self.cm_nc), dtype=torch.bool, device=targets.device)
         batch_idx = torch.arange(targets.shape[0], device=targets.device).view(-1, 1, 1).expand_as(targets)
-        present[batch_idx[valid], targets[valid].long()] = True
+        present.view(-1).index_fill_(0, batch_idx[valid] * self.cm_nc + targets[valid].long(), True)
         if self.nc == 1:
             self.nt_per_image[0] += int(present[:, 1].sum())
         else:
@@ -1885,14 +1887,15 @@ class SemanticMetrics(SimpleClass, DataExportMixin):
     def summary(self, normalize: bool = True, decimals: int = 5) -> list[dict]:
         """Generate a per-class summary of semantic segmentation metrics.
 
-        Each row includes the class image and pixel counts, per-class IoU, and the global mIoU and pixel accuracy.
+        Each row includes the class image and pixel counts, per-class IoU and pixel accuracy, and the global mIoU and
+        pixel accuracy.
 
         Args:
             normalize (bool): For semantic metrics, values are already in [0, 1].
             decimals (int): Number of decimal places to round the metric values to.
 
         Returns:
-            (list[dict]): A list of dictionaries, one per class, with per-class IoU and shared scalars.
+            (list[dict]): A list of dictionaries, one per class, with per-class IoU, pixel accuracy, and shared scalars.
         """
         miou = round(self.miou, decimals)
         pixel_acc = round(self.pixel_accuracy, decimals)
@@ -1906,6 +1909,7 @@ class SemanticMetrics(SimpleClass, DataExportMixin):
                 "IoU": round(float(per_class[c]), decimals),
                 "mIoU": miou,
                 "pixel_acc": pixel_acc,
+                "class_pixel_acc": round(float(self.per_class_pixel_accuracy[c]), decimals),
             }
             for c in self.ap_class_index
         ]

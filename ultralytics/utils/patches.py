@@ -6,6 +6,7 @@ from __future__ import annotations
 import time
 from contextlib import contextmanager
 from copy import copy
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -34,9 +35,11 @@ def imread(filename: str | Path, flags: int = cv2.IMREAD_COLOR) -> np.ndarray | 
         >>> img = imread("path/to/image.jpg", cv2.IMREAD_GRAYSCALE)
 
     Notes:
-        - Multi-page grayscale TIFFs with same-size pages stack them as channels. Color TIFFs keep every band, such as
-          alpha or near-infrared, only with cv2.IMREAD_UNCHANGED. Other multi-page TIFFs, such as Cloud Optimized
-          GeoTIFFs with overview and thumbnail pages, return their first page.
+        - Images are returned upright, with EXIF orientation applied, for every format and flag, so labels and
+          predictions share the frame viewers display.
+        - Only cv2.IMREAD_UNCHANGED stacks the same-size pages of a multi-page grayscale TIFF as channels and keeps
+          every band of a color TIFF, such as alpha or near-infrared. Other flags, and TIFFs with mixed page sizes such
+          as Cloud Optimized GeoTIFFs, return the first page, so scanned documents read as one page.
         - 16-bit images keep their high byte as 8-bit, unless flags explicitly include cv2.IMREAD_ANYDEPTH.
           cv2.IMREAD_UNCHANGED preserves channels but still converts 16-bit images to 8-bit.
     """
@@ -50,13 +53,18 @@ def imread(filename: str | Path, flags: int = cv2.IMREAD_COLOR) -> np.ndarray | 
     im = None
     if flags != cv2.IMREAD_GRAYSCALE and filename.lower().endswith((".tiff", ".tif")):
         success, frames = cv2.imdecodemulti(file_bytes, cv2.IMREAD_UNCHANGED)
-        if success and (frames[0].ndim == 3 or (len(frames) > 1 and all(f.shape == frames[0].shape for f in frames))):
+        stack = flags == cv2.IMREAD_UNCHANGED and len(frames) > 1 and all(f.shape == frames[0].shape for f in frames)
+        if success and (frames[0].ndim == 3 or stack):
             im = frames[0] if frames[0].ndim == 3 else np.stack(frames, axis=2)  # color pages keep the first page
-            im = im if frames[0].ndim == 2 or flags == cv2.IMREAD_UNCHANGED else im[..., :3]  # BGR, alpha dropped
+            im = im if flags == cv2.IMREAD_UNCHANGED else im[..., :3]  # BGR, alpha dropped
     if im is None and filename.lower().endswith(PIL_FALLBACK_SUFFIXES):
         im = _imread_pil(filename, flags)  # EXIF-aware
     if im is None:
-        im = cv2.imdecode(file_bytes, flags)
+        # cv2 leaves an image as stored with IMREAD_UNCHANGED, and a WebP with any flag before 5.0
+        stored = flags == cv2.IMREAD_UNCHANGED or bytes(file_bytes[8:12]) == b"WEBP"
+        im = cv2.imdecode(file_bytes, flags | cv2.IMREAD_IGNORE_ORIENTATION if stored else flags)
+        if stored and im is not None:
+            im = _exif_transpose(im, memoryview(file_bytes))
     if im is not None and im.dtype == np.uint16 and (flags == cv2.IMREAD_UNCHANGED or not flags & cv2.IMREAD_ANYDEPTH):
         im = (im >> 8).astype(np.uint8)
     return im[..., None] if im is not None and im.ndim == 2 else im  # Always ensure 3 dimensions
@@ -68,11 +76,12 @@ _pil_plugins_registered = False
 
 
 def image_open(filename, *args, **kwargs):
-    """Open an image with PIL, lazily registering the HEIF plugin on first failure.
+    """Open an image with PIL, lazily registering the HEIF plugin the first time Pillow cannot identify a file.
 
     This monkey-patches PIL.Image.open to add HEIC/HEIF support via pi-heif (lightweight, decode-only), avoiding the
-    ~800ms startup cost of importing the package unless actually needed. AVIF is decoded natively by Pillow 11.3+ wheels
-    and does not require a plugin.
+    ~800ms startup cost of importing the package unless actually needed. Only `PIL.UnidentifiedImageError` triggers the
+    plugin install and retry; other errors, such as a missing or unreadable file, are raised unchanged. AVIF is decoded
+    natively by Pillow 11.3+ wheels and does not require a plugin.
 
     Args:
         filename (str | Path | IO[bytes]): Path to the image file or a binary file object.
@@ -87,7 +96,7 @@ def image_open(filename, *args, **kwargs):
         return _image_open(filename, *args, **kwargs)
     try:
         return _image_open(filename, *args, **kwargs)
-    except Exception:
+    except Image.UnidentifiedImageError:
         from ultralytics.utils.checks import check_requirements
 
         check_requirements("pi-heif")
@@ -118,6 +127,30 @@ def _imread_pil(filename: str, flags: int = cv2.IMREAD_COLOR) -> np.ndarray | No
             return cv2.cvtColor(np.asarray(img.convert("RGB")), cv2.COLOR_RGB2BGR)
     except Exception:
         return None
+
+
+def _exif_transpose(im: np.ndarray, data: memoryview) -> np.ndarray:
+    """Return a decoded image upright by applying the EXIF orientation of its encoded bytes, as cv2 color reads do."""
+    if data[:4] == b"\x89PNG":  # Pillow decodes a whole PNG to look for a late eXIf chunk, so walk its chunks first
+        i = 8
+        while i + 8 <= len(data) and data[i + 4 : i + 8] != b"eXIf":
+            i += 12 + int.from_bytes(data[i : i + 4], "big")
+        if i + 8 > len(data):
+            return im
+    elif data[:2] != b"\xff\xd8" and data[8:12] != b"WEBP":  # not JPEG or WebP: cv2 orients a TIFF itself
+        return im
+    try:
+        with _image_open(BytesIO(data)) as img:
+            orientation = img.getexif().get(274, 1)
+    except Exception:
+        return im
+    if orientation in {5, 6, 7, 8}:  # transposed, then flipped as below
+        im = im.swapaxes(0, 1)
+    if orientation in {2, 3, 6, 7}:
+        im = im[:, ::-1]
+    if orientation in {3, 4, 7, 8}:
+        im = im[::-1]
+    return np.ascontiguousarray(im)
 
 
 def imread_unicode(filename: str | Path, flags: int = cv2.IMREAD_COLOR) -> np.ndarray | None:
@@ -211,8 +244,10 @@ def torch_load(*args, **kwargs):
     """
     from ultralytics.utils.torch_utils import TORCH_1_13
 
-    if TORCH_1_13 and "weights_only" not in kwargs:
-        kwargs["weights_only"] = False
+    if TORCH_1_13:
+        kwargs.setdefault("weights_only", False)
+    else:
+        kwargs.pop("weights_only", None)
 
     return torch.load(*args, **kwargs)
 

@@ -9,9 +9,10 @@ import cv2
 import torch
 
 from ultralytics import YOLO
-from ultralytics.utils import LOGGER
+from ultralytics.utils import LOGGER, PREDICT_IOU
 from ultralytics.utils.checks import check_requirements
 from ultralytics.utils.downloads import GITHUB_ASSETS_STEMS
+from ultralytics.utils.patches import imread
 
 torch.classes.__path__ = []  # Torch module __path__._path issue: https://github.com/datalab-to/marker/issues/442
 
@@ -56,7 +57,9 @@ class Inference:
         >>> inf.inference()
     """
 
-    def __init__(self, model: str | None = None, imgsz: int = 640, conf: float = 0.25, iou: float = 0.7) -> None:
+    def __init__(
+        self, model: str | None = None, imgsz: int = 640, conf: float = 0.25, iou: float = PREDICT_IOU
+    ) -> None:
         """Initialize the Inference class, checking Streamlit requirements and setting up the model path.
 
         Args:
@@ -187,7 +190,7 @@ class Inference:
         """Perform inference on uploaded images."""
         for img_info in self.img_file_names:
             img_path = img_info["path"]
-            image = cv2.imread(img_path)  # Load and display the original image
+            image = imread(img_path)  # Load and display the original image
             if image is not None:
                 self.st.markdown(f"#### Processed: {img_info['name']}")
                 col1, col2 = self.st.columns(2)

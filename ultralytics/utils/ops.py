@@ -75,6 +75,94 @@ class Profile(contextlib.ContextDecorator):
         return time.perf_counter()
 
 
+def merge_tiles(
+    predictions: list[dict], windows: list[tuple], shape: tuple[int, int], iou: float, agnostic: bool, max_det: int
+) -> dict:
+    """Merge tile payloads after task postprocessing has restored their native window coordinates.
+
+    Each payload contains bboxes (xyxy or xywhr), conf and cls, optionally with masks, keypoints or extra columns;
+    alternatively it contains one semantic_mask, depth or probs tensor. Masks match their window size or a whole-pixel
+    stride of it, inferred from the larger side; dense maps match their window size. Boxes cut by an interior window
+    edge are dropped when another window sees them clear of its edges and a kept box covers them, then NMS removes
+    duplicates. Masks, dense or box-local `(rois, masks, shape)`, return box-local in the full image frame.
+    """
+    from ultralytics.utils.nms import nms_boxes
+
+    first = predictions[0]
+    if len(windows) == 1 and windows[0] == (0, 0, shape[1], shape[0]):
+        return first
+    if "probs" in first:
+        return {"probs": torch.stack([p["probs"] for p in predictions]).mean(0)}
+    if "bboxes" not in first:
+        key = next(iter(first))  # semantic class map or depth
+        discrete = key == "semantic_mask"
+        template = first[key]
+        output = template.new_zeros(shape)
+        weights = template.new_zeros(shape, dtype=torch.float32)
+        h, w = template.shape
+        y, x = torch.arange(h, device=output.device), torch.arange(w, device=output.device)
+        weight = torch.minimum(torch.minimum(y + 1, h - y)[:, None], torch.minimum(x + 1, w - x)[None]).float()
+        for pred, (x1, y1, x2, y2) in zip(predictions, windows):
+            if discrete:
+                current = weights[y1:y2, x1:x2]
+                output[y1:y2, x1:x2] = torch.where(weight > current, pred[key], output[y1:y2, x1:x2])
+                weights[y1:y2, x1:x2] = torch.maximum(weight, current)
+            else:
+                output[y1:y2, x1:x2] += pred[key] * weight
+                weights[y1:y2, x1:x2] += weight
+        return {key: output if discrete else output / weights}
+
+    boxes = torch.cat([p["bboxes"] for p in predictions]).float()
+    rotated = boxes.shape[1] == 5
+    regions = boxes.new_tensor(windows)
+    own = torch.cat([r.expand(len(p["bboxes"]), 4) for r, p in zip(regions, predictions)])  # MPS-safe when empty
+    offsets = own[:, :2]
+    boxes[:, :2] += offsets
+    if not rotated:
+        boxes[:, 2:4] += offsets
+    corners = xywhr2xyxyxyxy(boxes) if rotated else boxes.reshape(-1, 2, 2)
+    extent = torch.cat((corners.amin(1), corners.amax(1)), 1)
+    # A box touching an interior window edge is a cut fragment when another window sees it clear of its own interior
+    # edges, because that window saw the whole object.
+    border = own.new_tensor([0, 0, shape[1], shape[0]])
+    fragment = torch.cat((extent[:, :2] <= own[:, :2] + 2, extent[:, 2:] >= own[:, 2:] - 2), 1) & (own != border)
+    fragment = fragment.any(1)
+    if fragment.any():
+        e = extent[fragment, None]
+        inside = torch.cat((regions[:, :2] + 2 < e[..., :2], regions[:, 2:] - 2 > e[..., 2:]), -1) | (regions == border)
+        fragment[fragment.clone()] = inside.all(-1).any(1)
+    valid = (~fragment).nonzero().squeeze(1)
+    output = {k: torch.cat([p[k] for p in predictions]) for k in first if k not in {"bboxes", "masks", "keypoints"}}
+    classes = output["cls"][:, None] * (0 if agnostic else 2 * max(shape) + 1)
+    candidates = torch.cat((boxes[:, :2] + classes, boxes[:, 2:]), 1) if rotated else boxes + classes
+    keep = valid[nms_boxes(candidates[valid], output["conf"][valid].float(), iou, rotated=rotated)][:max_det]
+    if fragment.any():  # restore fragments no kept box of their class covers by half, i.e. the whole view missed them
+        lone = fragment.nonzero().squeeze(1)
+        e, k = (extent + classes)[lone, None], (extent + classes)[keep]  # class offsets separate classes as in NMS
+        overlap = (torch.min(e[..., 2:], k[:, 2:]) - torch.max(e[..., :2], k[:, :2])).clamp(0).prod(-1)
+        keep = torch.cat((keep, lone[~(overlap > (e[..., 2:] - e[..., :2]).prod(-1) / 2).any(1)]))
+        keep = keep[nms_boxes(candidates[keep], output["conf"][keep].float(), iou, rotated=rotated)][:max_det]
+    output = {"bboxes": boxes[keep], **{k: v[keep] for k, v in output.items()}}
+    if "keypoints" in first:
+        keypoints = torch.cat([p["keypoints"] for p in predictions])[keep].clone()
+        keypoints[..., :2] += offsets[keep, None]
+        output["keypoints"] = keypoints
+    if tiles := [(p["masks"], window) for p, window in zip(predictions, windows) if "masks" in p]:
+        template, (x1, y1, x2, y2) = tiles[0]
+        r = round(max(x2 - x1, y2 - y1) / max(template[2] if isinstance(template, tuple) else template.shape[-2:]))
+        h, w = -(-shape[0] // r), -(-shape[1] // r)
+        rois, masks = [], []
+        for m, window in tiles:
+            if not isinstance(m, tuple):  # a dense stack is box-local with every box spanning its window
+                rows = [[0, 0, m.shape[2], m.shape[1], 0, j] for j in range(len(m))]
+                m = torch.tensor(rows, dtype=torch.long, device=m.device).view(-1, 6), [m]
+            x1, y1 = ((v - r // 2 + r - 1) // r for v in window[:2])  # first sampled pixel, x1 when r=1
+            rois.append(m[0] + m[0].new_tensor([x1, y1, x1, y1, len(masks), 0]))
+            masks += m[1]
+        output["masks"] = clip_boxes(torch.cat(rois)[keep], (h, w)), masks, (h, w)
+    return output
+
+
 def segment2box(segment: np.ndarray, width: int = 640, height: int = 640) -> np.ndarray:
     """Convert segment coordinates to bounding box coordinates.
 
@@ -150,7 +238,7 @@ def scale_boxes(
     """
     if ratio_pad is None:  # calculate from img0_shape
         gain = min(img1_shape[0] / img0_shape[0], img1_shape[1] / img0_shape[1])  # gain  = old / new
-        new_h, new_w = round(img0_shape[0] * gain), round(img0_shape[1] * gain)  # LetterBox rounds each side
+        new_h, new_w = (max(round(x * gain), 1) for x in img0_shape[:2])  # LetterBox rounds each side
         gain_y, gain_x = new_h / img0_shape[0], new_w / img0_shape[1]
         pad_x, pad_y = round((img1_shape[1] - new_w) / 2 - 0.1), round((img1_shape[0] - new_h) / 2 - 0.1)
     else:
@@ -386,16 +474,17 @@ def xyxyxyxy2xywhr(x):
     Args:
         x (np.ndarray | torch.Tensor): Input box corners with shape (N, 8) or (N, 4, 2) in [xy1, xy2, xy3, xy4] format.
             Polygons with more than four points are accepted in the same two layouts, (N, 2P) or (N, P, 2), and are
-            reduced to their minimum-area rectangle.
+            reduced to their minimum-area rectangle. Any real dtype is accepted, e.g. float64 corners from `np.loadtxt`;
+            corners are cast to float32 for `cv2.minAreaRect`.
 
     Returns:
-        (np.ndarray | torch.Tensor): Converted data in [cx, cy, w, h, rotation] format with shape (N, 5). The
-            parameterization is canonical rather than the caller's: w is the longer side and rotation is in radians
-            from [-pi/4, 3pi/4), so a box given with w < h comes back with w and h swapped and its angle shifted by
-            pi/2 modulo pi.
+        (np.ndarray | torch.Tensor): Converted data in [cx, cy, w, h, rotation] format with shape (N, 5), as float64 for
+            NumPy input and with the input dtype and device for tensor input. The parameterization is canonical rather
+            than the caller's: w is the longer side and rotation is in radians from [-pi/4, 3pi/4), so a box given with
+            w < h comes back with w and h swapped and its angle shifted by pi/2 modulo pi.
     """
     is_torch = isinstance(x, torch.Tensor)
-    points = x.cpu().numpy() if is_torch else x
+    points = np.asarray(x.cpu() if is_torch else x, dtype=np.float32)  # cv2.minAreaRect accepts float32, not float64
     rboxes = []
     for pts in points:
         # NOTE: Use cv2.minAreaRect to get accurate xywhr,
@@ -524,6 +613,21 @@ def crop_mask(masks: torch.Tensor, boxes: torch.Tensor) -> torch.Tensor:
     return masks
 
 
+def letterbox_span(shape1: tuple[int, int], shape0: tuple[int, int]) -> tuple[int, int, int, int]:
+    """Return the (top, left, height, width) that an image of `shape0` spans once letterboxed into `shape1`.
+
+    Args:
+        shape1 (tuple[int, int]): Letterboxed (height, width).
+        shape0 (tuple[int, int]): Original image (height, width).
+
+    Returns:
+        (tuple[int, int, int, int]): Top and left padding, then the height and width of the image content.
+    """
+    gain = min(shape1[0] / shape0[0], shape1[1] / shape0[1])
+    h, w = max(round(shape0[0] * gain), 1), max(round(shape0[1] * gain), 1)
+    return round((shape1[0] - h) / 2 - 0.1), round((shape1[1] - w) / 2 - 0.1), h, w
+
+
 def process_mask(protos, masks_in, bboxes, shape, upsample: bool = False):
     """Generate binary instance masks from mask prototypes and coefficients, cropped to their bounding boxes.
 
@@ -576,13 +680,75 @@ def process_mask_native(protos, masks_in, bboxes, shape):
     # detections), which OOMs the worker. Upsample in chunks bounded by a pixel budget, thresholding each chunk to
     # uint8 immediately so the float intermediate stays small, then crop the assembled uint8 stack.
     gain = min(4 * mh / h, 4 * mw / w)
-    pad = (4 * mh - round(h * gain)) | (4 * mw - round(w * gain))  # letterbox padding at the input size (4x protos)
+    pad = (4 * mh - max(round(h * gain), 1)) | (4 * mw - max(round(w * gain), 1))  # input-size letterbox padding
     f = 4 // math.gcd(4, pad | pad // 2)  # smallest upsample (1, 2 or 4) that crops the padding on whole pixels
     n, masks = max(1, 16_000_000 // (h * w + f * f * mh * mw)), coeffs.new_empty((len(coeffs), h, w), dtype=torch.uint8)
     for i, c in zip(range(0, len(masks), n), coeffs.view(1, -1, mh, mw).split(n, 1)):  # fill one preallocated stack
         c = scale_masks(F.interpolate(c, scale_factor=f, mode="bilinear") if f > 1 else c, shape)[0]
         torch.gt(c, 0, out=masks[i : i + n])  # threshold straight into uint8, no bool or float copy
     return crop_mask(masks, bboxes)
+
+
+def process_mask_local(protos, masks_in, bboxes, shape):
+    """Decode each instance mask inside its own bounding box instead of over the full frame.
+
+    A mask is zero outside its box, so interpolating the prototype logits at box pixels only yields the masks of
+    `process_mask_native` in time and memory proportional to the summed box areas rather than N * H * W.
+
+    Args:
+        protos (torch.Tensor): Mask prototypes with shape (mask_dim, mask_h, mask_w), at 1/4 of the model input size.
+        masks_in (torch.Tensor): Mask coefficients with shape (N, mask_dim) where N is number of masks after NMS.
+        bboxes (torch.Tensor): Bounding boxes in xyxy format at the target scale with shape (N, 4).
+        shape (tuple): Target frame as (height, width): the model input size, or an image it was letterboxed from.
+
+    Returns:
+        rois (torch.Tensor): Int64 (N, 6) rows of x1, y1, x2, y2 box pixels in `shape`, then the mask's batch and row in
+            `masks`.
+        masks (list[torch.Tensor]): Uint8 batches of shape (n, h, w), each row holding one box's mask in its top-left
+            (y2 - y1, x2 - x1) corner.
+        keep (torch.Tensor): Bool (N,) flags, False for masks with no pixels.
+    """
+    c, mh, mw = protos.shape  # CHW
+    h, w = shape
+    dev = bboxes.device
+    top, left, ch, cw = letterbox_span((4 * mh, 4 * mw), shape)  # the frame inside the model input
+    # Prototype coordinate of every frame column and row, as bilinear interpolation with align_corners=False samples
+    # it, clamped to the prototypes centered on the frame so that letterbox padding never bleeds into a mask edge
+    fx = ((torch.arange(w, device=dev) + 0.5) * (cw / w) + left).clamp_(left + 2, left + cw - 2) / 4 - 0.5
+    fy = ((torch.arange(h, device=dev) + 0.5) * (ch / h) + top).clamp_(top + 2, top + ch - 2) / 4 - 0.5
+    ix, iy = fx.long(), fy.long()
+    fx, fy = fx - ix, fy - iy  # interpolation weights
+    x1, y1, x2, y2 = bboxes.ceil().long().unbind(1)  # the pixels crop_mask keeps: x1 <= column < x2
+    x1, y1, x2, y2 = x1.clamp_(0, w), y1.clamp_(0, h), x2.clamp_(0, w), y2.clamp_(0, h)
+    bw, bh = (x2 - x1).clamp_(min=0), (y2 - y1).clamp_(min=0)
+    area = bw * bh
+    order = area.argsort()  # similar boxes share a padded batch
+    sizes = torch.stack((bh, bw, area), 1)[order].tolist()
+    floor = 1 << (22 if bboxes.is_cuda else 16)  # padding is free below this many pixels; GPU time is per batch
+    protos, keep, masks, i = protos.float().view(c, -1), area > 0, [], 0
+    batch, row = torch.empty_like(area), torch.empty_like(area)
+    while i < len(sizes):
+        j, (H, W, total) = i + 1, sizes[i]
+        while j < len(sizes):  # grow while the batch's interpolation fits the budget and wastes under half its pixels
+            H2, W2, n = max(H, sizes[j][0]), max(W, sizes[j][1]), j + 1 - i
+            if n * W2 * max(H2, mh) > 1 << 22 or n * H2 * W2 > max(2 * (total + sizes[j][2]), floor):
+                break
+            H, W, total, j = H2, W2, total + sizes[j][2], j + 1
+        k = order[i:j]
+        n = torch.arange(len(k), device=dev)[:, None]
+        cols = (x1[k, None] + torch.arange(max(W, 1), device=dev)).clamp_(max=w - 1)
+        rows = (y1[k, None] + torch.arange(max(H, 1), device=dev)).clamp_(max=h - 1)
+        m = (masks_in[k] @ protos).view(-1, mh, mw).transpose(1, 2)  # logits (n, mw, mh): interpolate columns first
+        m = torch.lerp(m[n, ix[cols]], m[n, (ix[cols] + 1).clamp_(max=mw - 1)], fx[cols][..., None])
+        m = m.transpose(1, 2).contiguous()  # (n, mh, W), then rows
+        m = torch.lerp(m[n, iy[rows]], m[n, (iy[rows] + 1).clamp_(max=mh - 1)], fy[rows][..., None]) > 0
+        m &= (torch.arange(m.shape[2], device=dev) < bw[k, None])[:, None]  # zero the padding beside each box
+        m &= (torch.arange(m.shape[1], device=dev) < bh[k, None])[:, :, None]
+        keep[k] = m.flatten(1).any(1)
+        batch[k], row[k] = len(masks), n[:, 0]
+        masks.append(m.byte())
+        i = j
+    return torch.stack((x1, y1, x1 + bw, y1 + bh, batch, row), 1), masks, keep
 
 
 def scale_masks(
@@ -614,12 +780,14 @@ def scale_masks(
         return masks.new_zeros((*masks.shape[:2], im0_h, im0_w), dtype=torch.float32)
 
     if ratio_pad is None:  # calculate from im0_shape
-        gain_h = gain_w = min(im1_h / im0_h, im1_w / im0_w)  # gain  = old / new
-        pad_w, pad_h = (im1_w - round(im0_w * gain_w)) / 2, (im1_h - round(im0_h * gain_h)) / 2  # wh padding
+        top, left, ch, cw = letterbox_span((im1_h, im1_w), (im0_h, im0_w))
     else:
         (gain_h, gain_w), (pad_w, pad_h) = ratio_pad
-    top, left = (round(pad_h - 0.1), round(pad_w - 0.1)) if padding else (0, 0)
-    bottom, right = top + round(im0_h * gain_h), left + round(im0_w * gain_w)  # content end, odd pads extra at end
+        top, left = round(pad_h - 0.1), round(pad_w - 0.1)
+        ch, cw = max(round(im0_h * gain_h), 1), max(round(im0_w * gain_w), 1)
+    if not padding:
+        top = left = 0
+    bottom, right = top + ch, left + cw  # content end
     if ratio_pad and not padding and abs(im0_h * gain_h - bottom) + abs(im0_w * gain_w - right) > 1e-3:  # mid-pixel
         sh, sw = im0_h * gain_h / im1_h, im0_w * gain_w / im1_w  # sample the exact content span instead of cropping
         masks = masks.float()
@@ -648,7 +816,7 @@ def scale_coords(img1_shape, coords, img0_shape, ratio_pad=None, normalize: bool
     if ratio_pad is None:  # calculate from img0_shape
         img1_h, img1_w = img1_shape[:2]  # supports both HWC or HW shapes
         gain = min(img1_h / img0_h, img1_w / img0_w)  # gain  = old / new
-        new_h, new_w = round(img0_h * gain), round(img0_w * gain)  # LetterBox rounds each side
+        new_h, new_w = (max(round(x * gain), 1) for x in (img0_h, img0_w))  # LetterBox rounds each side
         gain_y, gain_x = new_h / img0_h, new_w / img0_w
         pad = round((img1_w - new_w) / 2 - 0.1), round((img1_h - new_h) / 2 - 0.1)
     else:
@@ -689,7 +857,7 @@ def masks2segments(masks: np.ndarray | torch.Tensor, strategy: str = "all") -> l
     """Convert masks to segments using contour detection.
 
     Args:
-        masks (np.ndarray | torch.Tensor): Binary masks with shape (N, H, W).
+        masks (np.ndarray | torch.Tensor | list[np.ndarray]): Binary masks with shape (N, H, W), or N masks of any size.
         strategy (str): Segmentation strategy, either 'all' to merge all contours or 'largest' to keep the contour with
             the most points.
 
@@ -698,10 +866,11 @@ def masks2segments(masks: np.ndarray | torch.Tensor, strategy: str = "all") -> l
     """
     from ultralytics.data.converter import merge_multi_segment
 
-    masks = masks.astype("uint8") if isinstance(masks, np.ndarray) else masks.byte().cpu().numpy()
+    masks = masks.byte().cpu().numpy() if isinstance(masks, torch.Tensor) else masks
     segments = []
-    for x in np.ascontiguousarray(masks):
-        c = cv2.findContours(x, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
+    for x in masks:
+        x = np.ascontiguousarray(x, dtype=np.uint8)
+        c = cv2.findContours(x, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0] if x.size else ()
         if c:
             if strategy == "all":  # merge and concatenate all segments
                 c = (

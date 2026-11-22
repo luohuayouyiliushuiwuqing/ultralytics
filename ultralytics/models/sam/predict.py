@@ -57,7 +57,6 @@ class Predictor(BasePredictor):
         im (torch.Tensor): The preprocessed input image.
         features (torch.Tensor): Extracted image features.
         prompts (dict[str, Any]): Dictionary to store various types of prompts (e.g., bboxes, points, masks).
-        segment_all (bool): Flag to indicate if full image segmentation should be performed.
         non_overlap_masks (bool): Whether each pixel is assigned to at most one of the predicted masks.
         mean (torch.Tensor): Mean values for image normalization.
         std (torch.Tensor): Standard deviation values for image normalization.
@@ -86,6 +85,7 @@ class Predictor(BasePredictor):
     """
 
     stride = 16
+    default_iou = 0.7  # SAM mask NMS, not the YOLO predict default
 
     def __init__(self, cfg=DEFAULT_CFG, overrides=None, _callbacks: dict | None = None):
         """Initialize the Predictor with configuration, overrides, and callbacks.
@@ -108,7 +108,6 @@ class Predictor(BasePredictor):
         self.im = None
         self.features = None
         self.prompts = {}
-        self.segment_all = False
         self.non_overlap_masks = False
 
     def preprocess(self, im):
@@ -304,7 +303,7 @@ class Predictor(BasePredictor):
         Raises:
             AssertionError: If the number of points don't match the number of labels, in case labels were passed.
         """
-        r = 1.0 if self.segment_all else min(dst_shape[0] / src_shape[0], dst_shape[1] / src_shape[1])
+        r = min(dst_shape[0] / src_shape[0], dst_shape[1] / src_shape[1])
         # Transform input prompts
         if points is not None:
             points = torch.as_tensor(points, dtype=self.torch_dtype, device=self.device)
@@ -325,7 +324,7 @@ class Predictor(BasePredictor):
             bboxes = bboxes[None] if bboxes.ndim == 1 else bboxes
             bboxes = bboxes * r
         if masks is not None:
-            masks = np.asarray(masks, dtype=np.uint8)
+            masks = np.asarray(masks, dtype=np.float32)
             masks = masks[None] if masks.ndim == 2 else masks
             letterbox = LetterBox(dst_shape, auto=False, center=False, padding_value=0, interpolation=cv2.INTER_NEAREST)
             masks = np.stack([letterbox(image=x).squeeze() for x in masks], axis=0)
@@ -382,7 +381,6 @@ class Predictor(BasePredictor):
         """
         import torchvision  # scope for faster 'import ultralytics'
 
-        self.segment_all = True
         ih, iw = im.shape[2:]
         h0, w0 = self.src_shape
         gain = min(ih / h0, iw / w0)  # letterbox gain; the image fills the top-left of the padded input
@@ -403,7 +401,7 @@ class Predictor(BasePredictor):
             points_for_image = point_grids[layer_idx] * fill * [iw, ih]  # crop resized to the input; prompt the image
             crop_masks, crop_scores, crop_bboxes = [], [], []
             for (points,) in batch_iterator(points_batch_size, points_for_image):
-                prompts = self._prepare_prompts(crop_im.shape[2:], self.src_shape, points=points)
+                prompts = self._prepare_prompts((ih, iw), (ih, iw), points=points)  # points are in input pixels
                 pred_mask, pred_score = self._inference_features(crop_features, *prompts, multimask_output=True)
                 # Interpolate predicted masks to input size
                 pred_mask = F.interpolate(pred_mask[None], (h, w), mode="bilinear", align_corners=False)[0]
@@ -516,7 +514,7 @@ class Predictor(BasePredictor):
             preds (tuple): The output from SAM model inference, containing:
                 - pred_masks (torch.Tensor): Predicted masks with shape (N, H, W).
                 - pred_scores (torch.Tensor): Confidence scores for each mask with shape (N,).
-                - pred_bboxes (torch.Tensor, optional): Predicted bounding boxes if segment_all is True.
+                - pred_bboxes (torch.Tensor, optional): Predicted bounding boxes, only returned by `generate`.
             img (torch.Tensor): The processed input image tensor with shape (B, C, H, W).
             orig_imgs (list[np.ndarray] | torch.Tensor): The original, unprocessed images.
 
@@ -531,7 +529,7 @@ class Predictor(BasePredictor):
         """
         # (N, H, W), (N,)
         pred_masks, pred_scores = preds[:2]
-        pred_bboxes = preds[2] if self.segment_all else None
+        pred_bboxes = preds[2] if len(preds) > 2 else None
         names = dict(enumerate(str(i) for i in range(pred_masks.shape[0])))
 
         if not isinstance(orig_imgs, list):  # input images are a torch.Tensor, not a list
@@ -561,8 +559,6 @@ class Predictor(BasePredictor):
                 cls = torch.arange(pred_masks.shape[0], dtype=torch.int32, device=pred_masks.device)[idx]
                 pred_bboxes = torch.cat([pred_bboxes, pred_scores[idx, None], cls[:, None]], dim=-1)
             results.append(Results(orig_img, path=img_path, names=names, masks=masks, boxes=pred_bboxes))
-        # Reset segment-all mode.
-        self.segment_all = False
         return results
 
     @smart_inference_mode()
@@ -605,6 +601,10 @@ class Predictor(BasePredictor):
 
     def setup_source(self, source):
         """Set up the data source for SAM inference."""
+        if self.args.tile:
+            raise ValueError(
+                "SAM uses its own crop_n_layers generation; tile is supported by YOLO and RT-DETR predictors."
+            )
         if source is None:  # handle the situation when set_imgsz in advance
             return
         self.reset_image()
@@ -742,7 +742,6 @@ class SAM2Predictor(Predictor):
         model (torch.nn.Module): The loaded SAM2 model.
         device (torch.device): The device (CPU or GPU) on which the model is loaded.
         features (dict): Cached image features for efficient inference.
-        segment_all (bool): Flag to indicate if all segments should be predicted.
         prompts (dict[str, Any]): Dictionary to store various types of prompts for inference.
 
     Methods:
@@ -2369,7 +2368,7 @@ class SAM3SemanticPredictor(SAM3Predictor):
 
         names = getattr(self.model, "names", [str(i) for i in range(pred_scores.shape[0])])
         if not isinstance(orig_imgs, list):  # input images are a torch.Tensor, not a list
-            orig_imgs = ops.convert_torch2numpy_batch(orig_imgs)
+            orig_imgs = ops.convert_torch2numpy_batch(orig_imgs)[..., ::-1]
         results = []
         for masks, boxes, orig_img, img_path in zip([pred_masks], [pred_boxes], orig_imgs, self.batch[0]):
             if masks.shape[0] == 0:
@@ -2685,7 +2684,7 @@ class SAM3VideoSemanticPredictor(SAM3SemanticPredictor):
         obj_id_to_mask = preds["obj_id_to_mask"]  # low res masks
         curr_obj_ids = sorted(obj_id_to_mask.keys())
         if not isinstance(orig_imgs, list):  # input images are a torch.Tensor, not a list
-            orig_imgs = ops.convert_torch2numpy_batch(orig_imgs)
+            orig_imgs = ops.convert_torch2numpy_batch(orig_imgs)[..., ::-1]
 
         names = self.model.names if self.model.names != ["visual"] else {}
         if len(curr_obj_ids) == 0:
@@ -3624,7 +3623,7 @@ class SAM3VideoSemanticPredictor(SAM3SemanticPredictor):
 
         det_masks_binary = det_masks > 0
         trk_masks_binary = trk_masks > 0
-        ious = mask_iou(det_masks_binary.flatten(1).float(), trk_masks_binary.flatten(1).float())  # (N, M)
+        ious = mask_iou(det_masks_binary.flatten(1), trk_masks_binary.flatten(1))  # (N, M)
 
         ious_np = ious.cpu().numpy()
         if self.o2o_matching_masklets_enable:

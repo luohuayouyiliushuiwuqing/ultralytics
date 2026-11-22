@@ -56,7 +56,7 @@ class DetectionValidator(BaseValidator):
         self.is_lvis = False
         self.class_map = None
         self.args.task = "detect"
-        self.iouv = torch.linspace(0.5, 0.95, 10)  # IoU vector for mAP@0.5:0.95
+        self.iouv = torch.linspace(0.5, 0.95, 10)  # IoU vector for mAP50-95
         self.niou = self.iouv.numel()
         self.metrics = DetMetrics()
 
@@ -103,9 +103,8 @@ class DetectionValidator(BaseValidator):
         Returns:
             (dict[str, Any]): Preprocessed batch.
         """
-        for k, v in batch.items():
-            if isinstance(v, torch.Tensor):
-                batch[k] = v.to(self.device, non_blocking=self.device.type not in {"cpu", "mps"})
+        batch = self.preprocess_targets(batch)
+        batch["img"] = batch["img"].to(self.device, non_blocking=self.device.type not in {"cpu", "mps"})
         batch["img"] = (batch["img"].half() if self.args.quantize == 16 else batch["img"].float()) / 255
         return batch
 
@@ -120,7 +119,7 @@ class DetectionValidator(BaseValidator):
                 if LOCAL_RANK in {-1, 0}:
                     for f in (self.save_dir / "labels").glob("*.txt"):
                         f.unlink(missing_ok=True)
-            self.label_root = os.path.commonpath([os.path.dirname(f) for f in self.dataloader.dataset.im_files])
+        self.label_root = os.path.commonpath([Path(f).absolute().parent for f in self.dataloader.dataset.im_files])
         if not self.training:
             self._check_max_det(self.args, {self.args.split or "val": self.dataloader.dataset})
         val = self.data.get(self.args.split, "")  # validation path
@@ -129,7 +128,7 @@ class DetectionValidator(BaseValidator):
             and "coco" in val
             and (val.endswith((f"{os.sep}val2017.txt", f"{os.sep}test-dev2017.txt")))
         )
-        self.is_lvis = isinstance(val, str) and "lvis" in val and not self.is_coco  # is LVIS
+        self.is_lvis = isinstance(val, str) and "lvis" in Path(val).parts and not self.is_coco  # is LVIS
         self.class_map = converter.coco80_to_coco91_class() if self.is_coco else list(range(1, len(model.names) + 1))
         self.args.save_json |= self.args.val and (self.is_coco or self.is_lvis) and not self.training  # run final val
         self.names = model.names
@@ -137,13 +136,18 @@ class DetectionValidator(BaseValidator):
         self.end2end = getattr(model, "end2end", False)
         native_model = model.model if getattr(model, "format", None) == "pt" else model
         if self.end2end and hasattr(native_model, "set_head_attr"):
-            native_model.set_head_attr(max_det=self.args.max_det, agnostic_nms=self.args.agnostic_nms)
+            # Class filtering needs candidates before max_det truncation.
+            native_model.set_head_attr(max_det=max(self.args.max_det, 300), agnostic_nms=self.args.agnostic_nms)
         self.seen = 0
         self.jdict = []
         self.is_custom_json = self.args.save_json and self.args.task == "detect" and not (self.is_coco or self.is_lvis)
         self.gdict = getattr(self, "gdict", None) if self.is_custom_json else None
         self.build_gdict = self.is_custom_json and self.gdict is None
         self.eval_ids = list(self.dataloader.sampler) if self.is_custom_json else None
+        if self.is_custom_json and self.args.tile:
+            self.eval_ids = list(
+                dict.fromkeys(self.dataloader.dataset.labels[i]["source_index"] for i in self.eval_ids)
+            )
         self.pred_counts = []
         if self.build_gdict:
             self.gdict = {"images": [], "annotations": [], "categories": [{"id": x} for x in self.class_map]}
@@ -170,6 +174,7 @@ class DetectionValidator(BaseValidator):
             preds,
             self.args.conf,
             self.args.iou,
+            classes=None if self.args.single_cls and self.nc == 1 else self.args.classes,
             nc=0 if self.args.task == "detect" else self.nc,
             multi_label=True,
             agnostic=self.args.single_cls or self.args.agnostic_nms,
@@ -259,7 +264,7 @@ class DetectionValidator(BaseValidator):
                     "target_img": np.unique(cls),
                     "conf": np.zeros(0) if no_pred else predn["conf"].cpu().numpy(),
                     "pred_cls": np.zeros(0) if no_pred else predn["cls"].cpu().numpy(),
-                    "im_name": Path(pbatch["im_file"]).name,
+                    "im_name": Path(pbatch["im_file"]).absolute().relative_to(self.label_root).as_posix(),
                 }
             )
             if self.args.plots:
@@ -281,7 +286,7 @@ class DetectionValidator(BaseValidator):
             if self.args.save_json:
                 self.pred_to_json(predn_scaled, pbatch)
             if self.args.save_txt:  # flatten the split-relative path so a/1.jpg and b/1.jpg write a_1.txt and b_1.txt
-                name = "_".join(Path(pbatch["im_file"]).relative_to(self.label_root).with_suffix("").parts)
+                name = "_".join(Path(pbatch["im_file"]).absolute().relative_to(self.label_root).with_suffix("").parts)
                 self.save_one_txt(
                     predn_scaled, self.args.save_conf, pbatch["ori_shape"], self.save_dir / "labels" / f"{name}.txt"
                 )
@@ -328,7 +333,7 @@ class DetectionValidator(BaseValidator):
                     self.gdict[key] = [x for _, gdict, _ in gathered_json for x in gdict[key]]
             self.metrics.stats = merged_stats
             self._gather_image_metrics(self.metrics.box)
-            self.seen = len(self.dataloader.dataset)  # total image count from dataset
+            self.seen = self.num_images
         elif RANK > 0:
             dist.gather_object(self.metrics.stats, None, dst=0)
             dist.gather_object((self.jdict, self.gdict if self.build_gdict else None, self.pred_counts), None, dst=0)
@@ -419,7 +424,8 @@ class DetectionValidator(BaseValidator):
             (torch.utils.data.DataLoader): DataLoader for validation.
         """
         dataset = self.build_dataset(dataset_path, batch=batch_size, mode="val")
-        if self.names and len(self.names) < self.data["nc"]:  # standalone val of a model with fewer classes
+        # standalone val of a model with fewer classes; single_cls already maps every label to class 0
+        if self.names and len(self.names) < self.data["nc"] and not self.args.single_cls:
             LOGGER.warning(f"Skipping labels of classes the model (nc={len(self.names)}) cannot predict.")
             dataset.update_labels(list(range(len(self.names))))
         return build_dataloader(
@@ -444,6 +450,7 @@ class DetectionValidator(BaseValidator):
             paths=batch["im_file"],
             fname=self.save_dir / f"val_batch{ni}_labels.jpg",
             names=self.names,
+            class_colors=self.data.get("colors"),
             on_plot=self.on_plot,
         )
 
@@ -472,6 +479,7 @@ class DetectionValidator(BaseValidator):
             paths=batch["im_file"],
             fname=self.save_dir / f"val_batch{ni}_pred.jpg",
             names=self.names,
+            class_colors=self.data.get("colors"),
             on_plot=self.on_plot,
         )  # pred
 
@@ -606,6 +614,8 @@ class DetectionValidator(BaseValidator):
                         if self.gdict
                         else [int(Path(x).stem) for x in self.dataloader.dataset.im_files]
                     )
+                    if not self.gdict and self.args.classes is not None and not self.args.single_cls:
+                        val.params.catIds = [self.class_map[c] for c in np.atleast_1d(self.args.classes)]
                     val.evaluate()
                     val.accumulate()
                     val.summarize()

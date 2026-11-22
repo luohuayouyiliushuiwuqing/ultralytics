@@ -1,13 +1,14 @@
 ---
 plans: [free, pro, enterprise]
+title: YOLO Image Annotation Tool with AI Auto-Annotation
 comments: true
-description: Annotate images in Ultralytics Platform by hand or with AI auto-annotation from SAM 3.1, YOLO, and models like Gemini 4 Argon, GPT-6.1 Sol, and Claude Opus 5.5.
-keywords: Ultralytics Platform, annotation, labeling, auto-annotation, AI labeling, SAM 3.1, YOLO, Gemini 4 Argon, GPT-6.1 Sol, GPT-6 Astra, Claude Opus 5.5, Claude Fable 5.1, Claude Sonnet 5.5, Gemini 3.8 Flash, vision language models, Moondream, Gemma 4, Qwen, Nemotron, YOLOE, Grounding DINO, bounding box, polygon, keypoints, skeleton templates, pose estimation, segmentation
+description: Label images for YOLO in the Ultralytics Platform annotation tool, by hand or with AI auto-annotation from SAM 3.1, YOLO, GPT-6.2 Sol, Gemini 4 Argon, and Claude Opus 5.5.
+keywords: Ultralytics Platform, annotation, labeling, image annotation tool, YOLO annotation tool, auto-annotation, AI labeling, SAM 3.1, YOLO, Gemini 4 Argon, GPT-6.2 Sol, GPT-6.2 Astra, Claude Opus 5.5, Claude Fable 5.2, Claude Sonnet 5.5, Gemini 4 Carbon, Gemini 4 Neon, Gemini 4 Hydrogen, Gemini 3.8 Flash, vision language models, Moondream, Gemma 4, Qwen, Nemotron, WeVisOne-VL, Hy4, Muse Ember, YOLOE, visual prompts, Grounding DINO, bounding box, polygon, keypoints, skeleton templates, pose estimation, keypoint visibility, add keypoints, segmentation
 ---
 
-# Annotation Editor
+# Image Annotation Editor
 
-[Ultralytics Platform](https://platform.ultralytics.com) includes an annotation editor for labeling images with bounding boxes, polygons, keypoints, oriented boxes, and classifications. The editor supports manual drawing, [SAM-powered smart annotation](https://www.ultralytics.com/annotate), and predictions from compatible YOLO models or, on detection datasets with 1–200 classes, class-prompted models: hosted open-source models or paid provider models.
+[Ultralytics Platform](https://platform.ultralytics.com) includes an annotation editor for [labeling images](https://www.ultralytics.com/glossary/data-labeling) with bounding boxes, polygons, keypoints, oriented boxes, and classifications. The editor supports manual drawing, [SAM-powered smart annotation](https://www.ultralytics.com/annotate), and predictions from compatible YOLO models or, on detection datasets with 1–200 classes, [class-prompted models](https://platform.ultralytics.com/models): hosted open-source models or paid provider models.
 
 ![Ultralytics Platform Annotate Editor Toolbar With Canvas](https://cdn.ul.run/i/5ba36616a9363a036217c9b058daf35c.avif)<!-- screenshot -->
 
@@ -43,7 +44,7 @@ The annotation editor provides annotation tools for 6 YOLO task types:
 
 ??? info "Object Detection"
 
-    **What it does:** Identifies objects and their locations with axis-aligned bounding boxes.
+    **What it does:** Identifies objects and their locations with axis-aligned [bounding boxes](https://www.ultralytics.com/glossary/bounding-box).
 
     **Label format:** [`class_id center_x center_y width height`](../../datasets/detect/index.md#ultralytics-yolo-format) (all normalized 0-1)
 
@@ -53,7 +54,7 @@ The annotation editor provides annotation tools for 6 YOLO task types:
 
 ??? info "Instance Segmentation"
 
-    **What it does:** Creates pixel-precise masks for each object instance.
+    **What it does:** Creates pixel-precise masks for [each object instance](https://www.ultralytics.com/glossary/instance-segmentation).
 
     **Label format:** [`class_id x1 y1 x2 y2 x3 y3 ...`](../../datasets/segment/index.md#ultralytics-yolo-format) (polygon vertices, normalized 0-1)
 
@@ -61,9 +62,17 @@ The annotation editor provides annotation tools for 6 YOLO task types:
 
     **Use cases:** Medical imaging, autonomous vehicles, photo editing, agricultural analysis
 
+??? info "Image Classification"
+
+    **What it does:** Assigns a single label to the entire image.
+
+    **Label format:** [Folder-based](../../datasets/classify/index.md#dataset-structure-for-yolo-classification-tasks) — images organized by class name (`train/cats/`, `train/dogs/`)
+
+    **Use cases:** Content moderation, quality control, medical diagnosis, scene recognition
+
 ??? info "Pose Estimation"
 
-    **What it does:** Detects body keypoints for skeleton tracking.
+    **What it does:** Detects body [keypoints](https://www.ultralytics.com/glossary/keypoints) for skeleton tracking.
 
     **Label format:** [`class_id cx cy w h kx1 ky1 v1 kx2 ky2 v2 ...`](../../datasets/pose/index.md#ultralytics-yolo-format)
 
@@ -82,14 +91,6 @@ The annotation editor provides annotation tools for 6 YOLO task types:
     **Example:** `0 0.1 0.1 0.9 0.1 0.9 0.9 0.1 0.9` — Rotated rectangle
 
     **Use cases:** Aerial imagery, document analysis, manufacturing inspection, ship detection
-
-??? info "Image Classification"
-
-    **What it does:** Assigns a single label to the entire image.
-
-    **Label format:** [Folder-based](../../datasets/classify/index.md#dataset-structure-for-yolo-classification-tasks) — images organized by class name (`train/cats/`, `train/dogs/`)
-
-    **Use cases:** Content moderation, quality control, medical diagnosis, scene recognition
 
 ## Getting Started
 
@@ -126,7 +127,7 @@ flowchart TD
 
 Pose annotation uses `Draw` with a skeleton template; its `Smart` mode offers YOLO pose models only, with no SAM picker or auto-apply toggle. Classification uses the class sidebar directly and shows no drawing toolbar or `Smart` button at all.
 
-Smart annotation is not currently available for [connected datasets](../integrations/index.md) backed by cloud or On Premise storage, or for datasets with more than three image channels.
+Smart annotation needs [AI features](../integrations/index.md#ai-features) on for cloud storage datasets, and is unavailable for On Premise datasets and datasets with more than three image channels.
 
 The editor remembers your mode, model, and auto-apply choice for each dataset in your browser.
 
@@ -150,7 +151,7 @@ Draw rectangular boxes around objects:
 
 ### Polygon (Segment)
 
-Draw precise polygon masks:
+Draw precise [polygon masks](https://www.ultralytics.com/blog/a-guide-to-polygon-annotation-with-ultralytics-platform):
 
 1. Select a class in the class sidebar
 2. In the default `Draw` mode, click to add vertices, or hold `Shift` and move the mouse to freehand-draw dense points
@@ -176,7 +177,9 @@ Annotate poses using skeleton templates. Select a template from the toolbar, cli
 3. Click on the image to place all keypoints at once
 4. Drag individual keypoints to adjust their positions
 
-![Ultralytics Platform Annotate Pose Template Dropdown](https://cdn.ul.run/i/740678f4732fd3b862179e209a5ea8c5.avif)<!-- screenshot -->
+To move several keypoints of one pose together, such as a whole arm, select the pose, then `Shift+Click` each keypoint you want; `Shift+Click` a selected keypoint again to drop it. Dragging any selected keypoint moves them all by the same offset, while dragging an unselected keypoint moves only that keypoint and clears the keypoint selection. Keypoints can be selected in one pose at a time, and the selection clears when the pose selection changes.
+
+![Ultralytics Platform annotation toolbar template picker listing the Person, Hand, Dog, Face, and Box default templates and two custom templates](https://cdn.ul.run/i/5251858d58bab8d5073c46ec98fe1e65.avif)<!-- screenshot -->
 
 #### Built-in Skeleton Templates
 
@@ -186,11 +189,11 @@ The editor includes 5 built-in templates:
 | ---------- | --------- | ---------------------------------------------------------------------------------------------------------------------- |
 | **Person** | 17        | [COCO human body pose](../../datasets/pose/coco.md) — nose, eyes, ears, shoulders, elbows, wrists, hips, knees, ankles |
 | **Hand**   | 21        | [Ultralytics Hand Keypoints](../../datasets/pose/hand-keypoints.md) — wrist, thumb, index, middle, ring, pinky joints  |
-| **Dog**    | 18        | AP-10K animal pose — nose, head, neck, shoulders, tailbase, tail, and 4 legs (elbows, knees, paws)                     |
+| **Dog**    | 18        | Quadruped pose — nose, head, neck, shoulders, tailbase, tail, and 4 legs (elbows, knees, paws)                         |
 | **Face**   | 68        | iBUG 300W facial landmarks — jaw, eyebrows, nose, eyes, mouth                                                          |
 | **Box**    | 4         | Corner keypoints — top-left, top-right, bottom-right, bottom-left                                                      |
 
-![Ultralytics Platform Annotate Pose Keypoints Skeleton](https://cdn.ul.run/i/e4a90c1619058fa74f045e6ba7d00b27.avif)<!-- screenshot -->
+![Ultralytics Platform Annotate Pose Keypoints Skeleton](https://cdn.ul.run/i/39c7d759e6aa99eb6d5dc606f77527b7.avif)<!-- screenshot -->
 
 #### Custom Skeleton Templates
 
@@ -203,7 +206,7 @@ Create custom templates for any pose structure:
 5. Connect keypoints by selecting two points (connections are drawn automatically as you place sequential keypoints)
 6. Save the template for reuse across your dataset
 
-![Ultralytics Platform Annotate Pose Custom Template](https://cdn.ul.run/i/4bced0f094f4707c361de3ca93108835.avif)<!-- screenshot -->
+![Ultralytics Platform Annotate Pose Custom Template](https://cdn.ul.run/i/8c8dc5aa884bed7a349c68d8bce025e9.avif)<!-- screenshot -->
 
 Custom templates are saved to the dataset's workspace and available in all of its pose datasets. Edit or delete them from the template picker.
 
@@ -215,6 +218,49 @@ Custom templates are saved to the dataset's workspace and available in all of it
 
     Each keypoint has a visibility flag: `0` = not labeled, `1` = labeled but occluded, `2` = labeled and visible. Keypoints you place are labeled visible (`2`). Right-click a keypoint and choose **Hide Point** to mark it not labeled (`0`), or right-click the pose and choose **Reset Visibility** to show its hidden keypoints again. Imported labels keep their visibility flags.
 
+#### Add Keypoints to a Labeled Dataset
+
+A pose dataset holds one keypoint count, set by the `kpt_shape` of the uploaded files or by the first template you choose or pose you save in the editor, and every pose in it has that many keypoints. Choosing a template with a different count fails with **This dataset has 4 keypoints; choose a 4-keypoint skeleton**. To grow a skeleton, for example from 4 to 6 keypoints, import a copy of the dataset whose poses already have the new keypoints, marked not labeled (`0`):
+
+1. [Export the dataset](datasets.md#export-dataset) as NDJSON.
+2. Run the script below. It builds the YOLO folders, appends the new keypoints to every pose at its box center with visibility `0`, updates `kpt_shape` and `flip_idx`, and zips the result. Custom OKS sigmas and image metadata don't carry over. Datasets uploaded with `kpt_shape: [N, 2]` have no visibility values, so the script stops on them.
+3. [Upload](datasets.md#upload-dataset) the ZIP as a new pose dataset.
+4. Choose **New Template...**, click **Start from...** to load the old template, place the new keypoints after the existing ones, name them, and save. Saving assigns the template to the dataset.
+5. On each image, right-click a pose and choose **Reset Visibility** to show its hidden keypoints, drag the new ones from the box center into place, and choose **Hide Point** on any new keypoint the image doesn't show. **Reset Visibility** also shows keypoints that were already hidden, often in the image's top-left corner, so choose **Hide Point** on each of those again.
+
+```python
+import asyncio
+import shutil
+from pathlib import Path
+
+from ultralytics.data.converter import convert_ndjson_to_yolo
+from ultralytics.utils import YAML
+
+NEW = 2  # keypoints to add to every pose
+
+yaml_path = asyncio.run(convert_ndjson_to_yolo("my-dataset.ndjson", output_path="datasets"))
+data = YAML.load(yaml_path)
+count, dims = data["kpt_shape"]
+assert dims == 3, "keypoints need a visibility value"
+
+# Append each new keypoint at its box center with visibility 0 (not labeled)
+for label in Path(yaml_path).parent.glob("labels/*/*.txt"):
+    rows = [row.split() for row in label.read_text().splitlines() if row.strip()]
+    label.write_text("".join(" ".join(row + [row[1], row[2], "0"] * NEW) + "\n" for row in rows))
+
+data["kpt_shape"] = [count + NEW, 3]
+if "flip_idx" in data:
+    data["flip_idx"] += list(range(count, count + NEW))  # swap the new entries if they are a left/right pair
+for key in ("kpt_oks_sigmas", "kpt_skeleton", "complete"):
+    data.pop(key, None)  # per-keypoint lists for the old count; "complete" makes a rerun reconvert, not pad twice
+YAML.save(yaml_path, data)
+shutil.make_archive("my-dataset-padded", "zip", Path(yaml_path).parent)
+```
+
+!!! warning "Label New Keypoints Where Visible"
+
+    Training leaves keypoints with visibility `0` out of the keypoint position loss, but it also teaches the model's keypoint confidence that they are not visible. A new keypoint left hidden on images where it can be seen therefore teaches the model to miss it.
+
 ### Oriented Bounding Box (OBB)
 
 Draw rotated boxes for angled objects:
@@ -224,7 +270,7 @@ Draw rotated boxes for angled objects:
 3. Use the rotation handle to adjust angle
 4. Drag corner handles to resize
 
-![Ultralytics Platform Annotate Obb Rotated Box](https://cdn.ul.run/i/bfdc7cf3feb3e9000529b3ed40a9889a.avif)<!-- screenshot -->
+![Ultralytics Platform Annotate Obb Rotated Box](https://cdn.ul.run/i/e6873fbf7a2504d748062cf4192cc4ae.avif)<!-- screenshot -->
 
 ### Classification (Classify)
 
@@ -237,14 +283,16 @@ Assign image-level class labels:
 
 ## Smart Annotation
 
-Smart annotation adds model-assisted annotation to the editor. In Smart mode, you can use [Segment Anything Model (SAM)](../../models/sam.md) for click-based annotation or use pretrained Ultralytics YOLO models and your own fine-tuned YOLO models to add predictions as annotations. On detection datasets with 1–200 classes, the picker also offers [class-prompted models](#class-prompted-smart-annotation) that detect the dataset's classes: six hosted open-source models, hosted text-prompted SAM 3 and SAM 3.1, and paid vision models from nine providers. SAM smart annotation is available for **detect**, **segment**, **semantic**, and **OBB** tasks; YOLO smart annotation also covers **pose**.
+Smart annotation adds [model-assisted annotation](https://www.ultralytics.com/blog/how-ultralytics-platform-uses-ai-to-automate-annotation) to the editor. In Smart mode, you can use [Segment Anything Model (SAM)](../../models/sam.md) for click-based annotation or use pretrained Ultralytics YOLO models and your own fine-tuned YOLO models to add predictions as annotations. On detection datasets with 1–200 classes, the picker also offers [class-prompted models](#class-prompted-smart-annotation) that detect the dataset's classes: nine hosted open-source models (one more with [Early access](../account/settings.md#early-access) on), hosted text-prompted [SAM 3](https://platform.ultralytics.com/models/sam3) and [SAM 3.1](https://platform.ultralytics.com/models/sam3.1), and paid vision models from twelve providers. SAM smart annotation is available for **detect**, **segment**, **semantic**, and **OBB** tasks; YOLO smart annotation also covers **pose**.
+
+Model predictions never replace your labels: a prediction that overlaps an existing annotation of the same class by more than the prediction [IoU](https://www.ultralytics.com/glossary/intersection-over-union-iou) setting (default `0.5`, also applied while class-prompted models hide the setting) is skipped. [Batch Annotation](#batch-annotation) applies the same rule to images that already have labels.
 
 ### SAM Smart Annotation
 
 With a SAM model selected:
 
 1. Select `Smart` or press `S`
-2. Click on the object you want to annotate — SAM generates an initial mask in real-time
+2. Click on the object you want to annotate — SAM generates an initial mask in real time
 3. Refine the mask with additional clicks: click **outside** the current mask to add coverage, or click **inside** the current mask to subtract regions
 4. Press `Enter` or `Escape` to save the annotation, or enable **auto-apply** for one-click workflows
 
@@ -316,7 +364,7 @@ Switching models while Smart mode is active re-initializes the predictor for the
 
 ### YOLO Smart Annotation
 
-With a YOLO model selected, Smart annotation can add predictions from pretrained Ultralytics models or your own fine-tuned models.
+With a YOLO model selected, Smart annotation can add predictions from [pretrained Ultralytics models](https://platform.ultralytics.com/ultralytics/yolo26) or your own fine-tuned models.
 
 1. Select `Smart` or press `S`
 2. Select a YOLO model from the model picker in the toolbar (`Models` or `My Models`)
@@ -329,47 +377,60 @@ With a YOLO model selected, Smart annotation can add predictions from pretrained
 
     - The model picker lists models that match the current dataset task, so a pose dataset offers pose models. Detect and segment datasets also show each other's models, disabled.
     - If the model's classes differ from the dataset's, a **Map classes** dialog maps each model class to a dataset class or skips it, and on a dataset without classes it creates them.
-    - Duplicate predictions are skipped when they overlap an existing annotation of the same class at IoU `0.7` or higher.
+    - Each prediction adds up to 1,000 objects (300 for RT-DETR models), and Batch Annotation with a YOLO model uses the same limit.
 
 ### Class-Prompted Smart Annotation
 
 On a detection dataset with 1–200 classes, select a class-prompted model and click `Predict` (or press `P`): it detects the dataset's classes across the whole image with model-specific thresholds and adds editable boxes that you review and save like YOLO predictions. These models return no confidence scores, so the prediction settings (confidence and IoU) are hidden while one is selected.
 
-Hosted models run on Ultralytics Platform with no provider key; Moondream 3.1 is the default:
+Hosted models run on Ultralytics Platform with no provider key:
 
-| Model                                            | Picker project     | Parameters |
-| ------------------------------------------------ | ------------------ | ---------- |
-| **Moondream 3.1**                                | Open-source models | 9B         |
-| **Gemma 4 26B**                                  | Open-source models | 26B        |
-| **Qwen3.8 27B**                                  | Open-source models | 27B        |
-| **Nemotron 3 Nano Omni**                         | Open-source models | 30B        |
-| [**YOLOE-26x**](../../models/yoloe.md)           | Open-source models | 0.09B      |
-| **Florence-2 Large**                             | Open-source models | 0.78B      |
-| **OWLv2 Large**                                  | Open-source models | 0.44B      |
-| **Grounding DINO Base**                          | Open-source models | 0.23B      |
-| [**SAM 3 Text**](../../models/sam-3.md)          | Meta               | 0.86B      |
-| [**SAM 3.1 Text**](../../models/sam-3.md#sam-31) | Meta               | 0.87B      |
+| Model                                                                            | Picker project     | Parameters |
+| -------------------------------------------------------------------------------- | ------------------ | ---------- |
+| [**Moondream 3.1**](https://platform.ultralytics.com/models/moondream)           | Open-source models | 9B         |
+| [**Gemma 4 26B**](https://platform.ultralytics.com/models/gemma)                 | Open-source models | 26B        |
+| [**Qwen3.8 27B**](https://platform.ultralytics.com/models/qwen)                  | Open-source models | 27B        |
+| [**Nemotron 3 Nano Omni**](https://platform.ultralytics.com/models/nemotron)     | Open-source models | 30B        |
+| [**WeVisOne-VL 4B**](https://platform.ultralytics.com/models/wevisone)           | Open-source models | 4B         |
+| [**YOLOE-26x**](../../models/yoloe.md)                                           | Open-source models | 0.09B      |
+| [**Florence-2 Large**](https://platform.ultralytics.com/models/florence2)        | Open-source models | 0.78B      |
+| [**OWLv2 Large**](https://platform.ultralytics.com/models/owlv2)                 | Open-source models | 0.44B      |
+| [**Grounding DINO Base**](https://platform.ultralytics.com/models/groundingdino) | Open-source models | 0.23B      |
+| [**SAM 3 Text**](../../models/sam-3.md)                                          | Meta               | 0.86B      |
+| [**SAM 3.1 Text**](../../models/sam-3.md#sam-31)                                 | Meta               | 0.87B      |
 
-Paid vision models from OpenAI (including GPT-6 Astra and GPT-6.1 Sol), Anthropic (including Claude Fable 5.1 and Claude Opus 5.5), Google (including Gemini 4 Argon), Meta, SpaceXAI, DeepSeek, Z.ai, Kimi, and Xiaomi MiMo appear under each provider's project in the picker, by API name:
+Paid vision models from OpenAI (including [GPT-6.2 Astra](https://platform.ultralytics.com/models/gpt-6.2-astra) and [GPT-6.2 Sol](https://platform.ultralytics.com/models/gpt-6.2-sol)), Anthropic (including [Claude Fable 5.2](https://platform.ultralytics.com/models/claude-fable-5-2) and [Claude Opus 5.5](https://platform.ultralytics.com/models/claude-opus-5-5)), Google (including [Gemini 4 Argon](https://platform.ultralytics.com/models/gemini-4-argon), [Gemini 4 Carbon](https://platform.ultralytics.com/models/gemini-4-carbon), [Gemini 4 Neon](https://platform.ultralytics.com/models/gemini-4-neon), and [Gemini 4 Hydrogen](https://platform.ultralytics.com/models/gemini-4-hydrogen)), Meta, SpaceXAI, DeepSeek, Z.ai, Kimi, Xiaomi MiMo, Alibaba (including [Qwen4-Max](https://platform.ultralytics.com/models/qwen4-max)), MiniMax, and Tencent (including [Hy4](https://platform.ultralytics.com/models/hy4) and [Hy4 flash](https://platform.ultralytics.com/models/hy4-flash)) appear under each provider's project in the picker:
 
 <platform-annotation-models></platform-annotation-models>
 
-A paid provider model runs with the provider key saved in the dataset workspace's [**Settings > API Keys**](../account/api-keys.md#provider-keys-for-agents-and-annotation); without one, the prediction fails with an **Add API key** action. The provider bills your key for each prediction. After each prediction, the toast shows the number of objects detected, the elapsed time, and the cost: **Free** for a hosted model; for a paid model, the estimated provider cost when one is returned, otherwise **Billed by** and the provider name.
+A paid provider model runs with the provider key saved in the dataset workspace's [**Settings > API Keys**](../account/api-keys.md#provider-keys-for-agents-and-annotation); without one, the prediction fails with an **Add API key** action. The provider bills your key for each prediction. After each prediction, the toast shows the number of objects detected, the elapsed time, the output tokens when the model reports them (for example `1.8s · 1,248 output tokens · Free`), and the cost: **Free** for a hosted model; for a paid model, the estimated provider cost when one is returned, otherwise **Billed by** and the provider name.
+
+### Annotate Similar Objects with Visual Prompts
+
+On detect, segment, and OBB datasets with smart annotation available, **Annotate similar** uses labels you have already drawn as visual examples: [YOLOE-26x](../../models/yoloe.md#text-and-visual-prompts) finds more objects that look like them, with no class names or training needed.
+
+1. Draw a few labels on an image, then right-click one and choose **Annotate similar**. Every label of the selected classes on the image (at most 200) becomes an example. Right-clicking the image outside any annotation uses every annotation of the dataset task on the image instead; the action stays disabled until the image has one
+2. The dialog shows the **Examples** on the left and the **Result** on the right: the image's existing labels plus only the new objects, with a count such as **3 new objects found**. Adjust the confidence and IoU sliders, which start at `0.01` and `0.5`. On OBB datasets, oriented boxes are fitted to segmentation masks
+3. Click **Apply** to add exactly the new objects to this image, at no cost. **Apply** is disabled when nothing new is found
+
+Re-detections of your examples and of other existing labels are skipped by the same IoU rule as other predictions, and new objects don't repeat each other.
+
+After **Apply**, the toast offers **Annotate all**. It opens [Batch Annotation](#batch-annotation) with the same examples in place of the model picker, listed under **Example classes**: preview the samples, adjust confidence (default `0.25`) and IoU (default `0.5`), and click **Start** to find similar objects in every unlabeled image, or every image with **Include annotated images** on. The examples are read from the image you drew them on, even if you move to another image before clicking **Annotate all**, and the run is billed like any Batch Annotation run.
 
 ### Batch Annotation
 
-Batch Annotation runs one model — a YOLO model, or on detection datasets with 1–200 classes a class-prompted model — over a whole dataset instead of the open image. Open it from the dataset page with **More actions > Batch Annotation**, or from the **Annotate all** action on the toast after an editor prediction that finds objects or after [Find Similar Images](datasets.md#find-similar-images) adds images. It is available to dataset editors on Platform-hosted datasets with up to three image channels, for every task except depth.
+Batch Annotation runs one model — a YOLO model, on detection datasets with 1–200 classes a class-prompted model, or YOLOE-26x with [visual examples](#annotate-similar-objects-with-visual-prompts) — over a whole dataset instead of the open image. Open it from the dataset page with **More actions > Batch Annotation**, from the **Annotate all** action on the toast after an editor prediction that finds objects or after [Find Similar Images](datasets.md#find-similar-images) adds images, or from **Annotate all** after **Annotate similar**. It is available to dataset editors on Platform-hosted datasets with up to three image channels, for every task except depth.
 
-1. Select a model from the picker (`Models`, including the **Open-source models** and provider projects on detection datasets with 1–200 classes, or `My Models`); on a detection dataset the dialog opens with Moondream 3.1 selected
-2. For a YOLO model, adjust the confidence (default `0.25`) and IoU (default `0.7`) sliders — the sample images beside the settings show what the model finds as you move them. A class-prompted model detects the dataset classes (1–200) with model-specific thresholds instead of these settings and returns no scores
-3. Turn on **Include annotated images** to also run over images that already have labels; the run adds what the model finds and keeps the labels they have
+1. Select a model from the picker (`Models`, including the **Open-source models** and provider projects on detection datasets with 1–200 classes, or `My Models`); the dialog opens with the model you last used in Smart mode, or with Moondream 3.1 on a detection dataset when that was a SAM model or none
+2. For a YOLO model, adjust the confidence (default `0.25`) and IoU (default `0.5`) sliders — the sample images beside the settings show what the model finds as you move them. A class-prompted model detects the dataset classes (1–200) with model-specific thresholds instead of these settings and returns no scores
+3. Turn on **Include annotated images** to also run over images that already have labels; the run keeps the labels they have and adds only what an image does not already have. Samples of annotated images preview their labels plus what the run adds
 4. Review the **Estimated Cost** and click **Start**
 
-![Ultralytics Platform Datasets Batch Annotation Dialog Sample Previews](https://cdn.ul.run/i/0d60fe240ab6e865901166baf7c6d956.avif)<!-- screenshot -->
+![Ultralytics Platform Datasets Batch Annotation Dialog Sample Previews](https://cdn.ul.run/i/66288d175f3eeecb2e7867093ac221a1.avif)<!-- screenshot -->
 
 By default only unlabeled images are annotated, and existing labels are never changed. A run needs dataset classes. For a YOLO model, if the model's classes differ from the dataset's, a **Map classes** step maps each model class to a dataset class or skips it, and on a dataset without classes it creates them — the run starts only after the classes exist. Starting a run saves a [dataset version](datasets.md#versions-tab) first, so you can restore the dataset if you don't like the result.
 
-The dataset page shows the run's progress, and **Stop** keeps and bills the images processed so far. When the run finishes, a summary shows the images processed and the annotations and classes added.
+The dataset page shows the run's progress, and **Stop** keeps and bills the images processed so far. When the run finishes, a summary shows the images processed and the annotations and classes added. If a paid provider refuses or rate-limits your key on three images in a row, the run stops early and reports how many images were not attempted.
 
 !!! note "Batch Annotation Cost"
 
@@ -404,7 +465,7 @@ Right-click an annotation to open a context menu with:
 | Hide Annotation(s)   |                        |
 | Delete Annotation(s) | `Delete` / `Backspace` |
 
-Right-clicking a polygon vertex or edge adds **Remove Point** or **Add Point**, and right-clicking a pose keypoint adds **Hide Point** and **Reset Visibility**. The menu also offers [**Blur faces**](datasets.md#blur-faces) when available.
+Right-clicking a polygon vertex or edge adds **Remove Point** or **Add Point**, and right-clicking a pose keypoint adds **Hide Point** and **Reset Visibility**. The menu also offers [**Blur faces**](datasets.md#blur-faces) when available, and on detect, segment, and OBB datasets with smart annotation available, [**Annotate similar**](#annotate-similar-objects-with-visual-prompts), which finds more objects like the selected labels.
 
 ## Visibility Controls
 
@@ -458,7 +519,7 @@ You can create new classes directly while annotating without leaving the editor:
 3. Enter the class name
 4. Press Enter to create and assign
 
-This allows for a seamless workflow where you can define classes as you encounter new object types in your data.
+This lets you define classes as you encounter new object types in your data.
 
 !!! tip "Unified Classes Table"
 
@@ -473,11 +534,11 @@ This allows for a seamless workflow where you can define classes as you encounte
 
 ### Class Colors
 
-Each class is assigned a color from the Ultralytics palette. You can customize colors using the color picker on the `Classes` tab; the selected colors are used throughout that dataset.
+Each class is assigned a color from the Ultralytics palette. You can customize colors using the color picker on the `Classes` tab; the selected colors are used throughout that dataset. [Model exports](../train/models.md#export-model) carry the dataset's current class colors.
 
 ## Keyboard Shortcuts
 
-Efficient annotation with keyboard shortcuts:
+Speed up annotation with keyboard shortcuts:
 
 === "General"
 
@@ -490,6 +551,7 @@ Efficient annotation with keyboard shortcuts:
     | `Delete` / `Backspace`            | Delete selected annotation |
     | `Cmd/Ctrl+Delete`                 | Delete image               |
     | `H`                               | Toggle all annotations     |
+    | `R`                               | Rotate image clockwise     |
     | `]`                               | Show or hide class sidebar |
     | `←` / `→`                         | Previous / next image      |
     | `1-9`                             | Select class 1-9           |
@@ -521,6 +583,7 @@ Efficient annotation with keyboard shortcuts:
     | `Click inside mask`    | Subtract region from SAM mask (negative point)                                  |
     | `Click outside mask`   | Add to SAM mask (positive point)                                                |
     | `Shift (hold) + Click` | Place multiple SAM points before auto-apply commits (Smart mode, auto-apply on) |
+    | `Shift+Click keypoint` | Select or deselect a keypoint of the selected pose to drag with others (pose)   |
     | `Z`                    | Remove the last polygon vertex while drawing / last SAM point (Smart mode)      |
     | `A`                    | Toggle auto-apply (SAM Smart mode)                                              |
     | `P`                    | Run the selected YOLO or class-prompted model (Smart mode)                      |
@@ -536,7 +599,7 @@ Efficient annotation with keyboard shortcuts:
     | `Cmd/Ctrl+Shift+]` | Bring to front |
     | `Cmd/Ctrl+Shift+[` | Send to back   |
 
-![Ultralytics Platform Annotate Keyboard Shortcuts Dialog](https://cdn.ul.run/i/be6c5f8c3abe5ac3d316da3feeb1926e.avif)<!-- screenshot -->
+![Ultralytics Platform Annotate Keyboard Shortcuts Dialog](https://cdn.ul.run/i/90be2fbc7f1697eac01adc63727b5f74.avif)<!-- screenshot -->
 
 ??? tip "View All Shortcuts"
 
@@ -613,19 +676,19 @@ Yes, but for best results:
 
 ### Which tasks support SAM smart annotation?
 
-SAM smart annotation is available for **detect**, **segment**, **semantic**, and **OBB** tasks. On pose datasets, `Smart` mode runs [YOLO smart annotation](#yolo-smart-annotation) only, and classification uses manual annotation only. Smart annotation is also unavailable on connected cloud and On Premise datasets and on datasets with more than three image channels.
+SAM smart annotation is available for **detect**, **segment**, **semantic**, and **OBB** tasks. On pose datasets, `Smart` mode runs [YOLO smart annotation](#yolo-smart-annotation) only, and classification uses manual annotation only. On cloud storage datasets it needs [AI features](../integrations/index.md#ai-features) on, and it is unavailable on On Premise datasets and on datasets with more than three image channels.
 
 ### Can I annotate a whole dataset at once?
 
-Yes. Use [Batch Annotation](#batch-annotation) from **More actions > Batch Annotation** on the dataset page. It runs one model over the dataset: an official YOLO model, one of your own trained or uploaded models from `My Models`, or, on detection datasets with 1–200 classes, a class-prompted model such as SAM 3.1 Text that detects your class names. By default it annotates only unlabeled images, existing labels are kept, and a dataset version is saved first so you can restore it. It costs $1.00 per 1,000 images processed (minimum $0.01), and paid provider models are also billed by the provider. Batch Annotation works on Platform-hosted datasets with up to three image channels and is not available for depth.
+Yes. Use [Batch Annotation](#batch-annotation) from **More actions > Batch Annotation** on the dataset page. It runs one model over the dataset: an official YOLO model, one of your own trained or uploaded models from `My Models`, or, on detection datasets with 1–200 classes, a class-prompted model such as SAM 3.1 Text that detects your class names. By default it annotates only unlabeled images, existing labels are kept, and a dataset version is saved first so you can restore it. It costs $1.00 per 1,000 images processed (minimum $0.01), and paid provider models are also billed by the provider. Batch Annotation works on Platform-hosted datasets with up to three image channels and is not available for depth. To find objects like ones you've already drawn, use [**Annotate similar**](#annotate-similar-objects-with-visual-prompts) and click **Annotate all**.
 
 ### Can I auto-annotate images with GPT, Claude, or Gemini models?
 
-Yes. On detection datasets with 1–200 classes, Smart annotation and [Batch Annotation](#batch-annotation) can run paid vision models such as Gemini 4 Argon, GPT-6.1 Sol, GPT-6 Astra, Claude Opus 5.5, and Claude Fable 5.1 with your own provider key from [**Settings > API Keys**](../account/api-keys.md#provider-keys-for-agents-and-annotation). Select the model under its provider in the model picker and click `Predict`; the provider bills your key for each prediction. The [class-prompted models](#class-prompted-smart-annotation) section lists every current model.
+Yes. On detection datasets with 1–200 classes, Smart annotation and [Batch Annotation](#batch-annotation) can run paid vision models such as Gemini 4 Argon, GPT-6.2 Sol, GPT-6.2 Astra, Claude Opus 5.5, and Claude Fable 5.2 with your own provider key from [**Settings > API Keys**](../account/api-keys.md#provider-keys-for-agents-and-annotation). Select the model under its provider in the model picker and click `Predict`; the provider bills your key for each prediction. The [class-prompted models](#class-prompted-smart-annotation) section lists every model available without Early access.
 
 ### Which class-prompted model should I use?
 
-In an October 2026 Ultralytics Platform benchmark of every class-prompted model on 108 images from 36 detection datasets spanning medical, aerial, industrial, retail, and everyday scenes, Gemini 4 Argon (`gemini-4-argon`) was the most accurate, ahead of GPT-6.1 Sol, Gemini 3.8 Flash, Claude Opus 5.5, and GPT-6 Astra. Claude Haiku 5.5 (`claude-haiku-5-5`) and Gemini 3.5 Flash-Lite (`gemini-3.5-flash-lite`) were the most accurate low-cost models, and Gemma 4 26B was the most accurate hosted model, ahead of Qwen3.8 27B, with no provider key needed. Accuracy depends heavily on the domain: models that find nearly every object in everyday photos miss many objects in PCB, X-ray, retail, and traffic images and in some medical datasets, so run a few predictions on your own images before starting [Batch Annotation](#batch-annotation).
+The [VLM Leaderboard](https://www.ultralytics.com/benchmarks/vlm) ranks class-prompted models by mAP<sub>50</sub> and compares their cost and speed on 360 images from 36 real-world detection datasets spanning medical, aerial, industrial, retail, and everyday scenes. In its November 2026 results, frontier paid models such as Gemini 4 Carbon (`gemini-4-carbon`), Gemini 4 Neon (`gemini-4-neon`), [GPT-6.1 Terra](https://platform.ultralytics.com/models/gpt-6.1-terra), Gemini 4 Hydrogen (`gemini-4-hydrogen`), and GPT-6.2 Sol (`gpt-6.2-sol`) were the most accurate; [Claude Haiku 5.5](https://platform.ultralytics.com/models/claude-haiku-5-5) (`claude-haiku-5-5`) and [Muse Ember 1.0](https://platform.ultralytics.com/models/muse-ember-1.0) (`muse-ember-1.0`) were the most accurate low-cost models; and Qwen3.8 27B, WeVisOne-VL 4B, and Gemma 4 26B were the most accurate hosted models, with no provider key needed. Accuracy depends heavily on the domain: models that find nearly every object in everyday photos miss many objects in PCB, X-ray, retail, and traffic images and in some medical datasets, so run a few predictions on your own images before starting [Batch Annotation](#batch-annotation).
 
 ### Can I create custom skeleton templates for pose annotation?
 

@@ -109,22 +109,17 @@ class ParkingPtsSelection:
 
     def upload_image(self) -> None:
         """Upload and display an image on the canvas, resizing it to fit within specified dimensions."""
-        from PIL import Image, ImageTk  # Scoped import because ImageTk requires tkinter package
+        from PIL import Image, ImageOps, ImageTk  # Scoped import because ImageTk requires tkinter package
 
         file = self.filedialog.askopenfilename(filetypes=[("Image Files", "*.png *.jpg *.jpeg")])
         if not file:
             LOGGER.info("No image selected.")
             return
 
-        self.image = Image.open(file)
+        self.image = ImageOps.exif_transpose(Image.open(file))
         self.imgw, self.imgh = self.image.size
-        aspect_ratio = self.imgw / self.imgh
-        canvas_width = (
-            min(self.canvas_max_width, self.imgw) if aspect_ratio > 1 else int(self.canvas_max_height * aspect_ratio)
-        )
-        canvas_height = (
-            min(self.canvas_max_height, self.imgh) if aspect_ratio <= 1 else int(canvas_width / aspect_ratio)
-        )
+        gain = min(self.canvas_max_width / self.imgw, self.canvas_max_height / self.imgh, 1)
+        canvas_width, canvas_height = round(self.imgw * gain), round(self.imgh * gain)
 
         self.canvas.config(width=canvas_width, height=canvas_height)
         self.canvas_image = ImageTk.PhotoImage(self.image.resize((canvas_width, canvas_height)))
@@ -248,13 +243,12 @@ class ParkingManagement(BaseSolution):
         available_slots, occupied_slots = len(self.json), 0
         annotator = SolutionAnnotator(im0, self.line_width)  # Initialize annotator
 
+        centers = [(int((b[0] + b[2]) / 2), int((b[1] + b[3]) / 2)) for b in map(self.get_enclosing_box, self.boxes)]
         for region in self.json:
             # Convert points to a NumPy array with the correct dtype and reshape properly
             region_polygon = np.array(region["points"], dtype=np.int32).reshape((-1, 1, 2))
             region_occupied = False
-            for box, cls in zip(self.boxes, self.clss):
-                x0, y0, x1, y1 = self.get_enclosing_box(box)
-                xc, yc = int((x0 + x1) / 2), int((y0 + y1) / 2)
+            for (xc, yc), cls in zip(centers, self.clss):
                 inside_distance = cv2.pointPolygonTest(region_polygon, (xc, yc), False)
                 if inside_distance >= 0:
                     annotator.display_objects_labels(

@@ -8,7 +8,7 @@ title: Account Settings
 
 # Settings
 
-[Ultralytics Platform](https://platform.ultralytics.com) settings allow you to configure your profile, social links, workspace preferences, and manage your data with GDPR-compliant export and deletion options.
+[Ultralytics Platform](https://platform.ultralytics.com) settings let you configure your profile, social links, and workspace preferences, and manage your data with GDPR-compliant export and deletion options.
 
 Settings is organized into nine tabs (in order): `Profile`, `API Keys`, `Plans`, `Billing`, `Usage`, `Referrals`, `Teams`, `Integrations`, and `Trash`.
 
@@ -18,8 +18,8 @@ extra-wide screens a sidebar next to the tabs lists your five most recent traini
 
 ## Profile Tab
 
-The `Profile` tab contains your profile information, email, social links, data region, connected accounts, and
-account management options.
+The `Profile` tab contains your profile information, email, social links, default visibility, data region, connected
+accounts, and account management options.
 
 ### Profile Information
 
@@ -66,11 +66,23 @@ In a team workspace the same card edits the workspace profile and icon, and requ
 
 1. Go to **Settings > Profile**
 2. Update fields (display name, company, use case, bio, and social links)
-3. Click **Save profile** below the Social profiles card. The button is enabled once you have unsaved changes.
+3. Click **Save changes** on the bar that appears at the bottom of the screen once you have unsaved changes, or
+   **Discard** to revert them.
 
 ### Early Access
 
-Switch to your personal workspace using the sidebar workspace selector, then open **Settings > Profile** and enable **Early access** to opt in to experimental updates. The preference belongs to your account and follows you into team workspaces. It unlocks **Ultralytics Image 9B** and **Krea 2 Turbo** in [Generate Similar Images](../data/datasets.md#generate-similar-images). [Agents](../agents.md) does not depend on it.
+Switch to your personal workspace using the sidebar workspace selector, then open **Settings > Profile**, enable **Early access**, and click **Save changes** to opt in to experimental updates. The preference belongs to your account and follows you into team workspaces. It unlocks **Ultralytics Image 9B** and **Krea 2 Turbo** in [Generate Similar Images](../data/datasets.md#generate-similar-images) and an early-access hosted model for [class-prompted annotation](../data/annotation.md#class-prompted-smart-annotation). [Agents](../agents.md) does not depend on it.
+
+### Default Visibility
+
+The **Default Visibility** switches set whether new projects and new datasets in the current workspace start as Public
+or Private; click **Save changes** to apply them. Each workspace has its own defaults, and in a team workspace only
+owners and admins can change them. Until they are changed, new projects and datasets start Private in Enterprise
+workspaces and Public otherwise. You can still choose the visibility of each new project or dataset when you create it,
+except [On Premise](../integrations/on-premise.md) datasets, which are always private. Clones start private when the
+default is Private and otherwise keep the source's visibility, which you can change in the clone dialog.
+[Roboflow](../integrations/roboflow.md) and [Label Studio](../integrations/label-studio.md) imports and the projects
+that remote training creates use the default directly.
 
 ### Social Links
 
@@ -139,7 +151,7 @@ The storage card shows:
 | ------------ | ----------------------------------------------------- |
 | **Datasets** | Uploaded images, videos, labels, and annotation files |
 | **Models**   | Trained model checkpoints (`.pt` files)               |
-| **Exports**  | Exported model formats (ONNX, TensorRT, CoreML, etc)  |
+| **Exports**  | Exported model formats (ONNX, TensorRT, CoreML, etc.) |
 
 #### Storage Limits
 
@@ -230,14 +242,15 @@ are deleted automatically.
 ## API Keys Tab
 
 The `API Keys` tab lets you create and manage API keys for remote training and inference, and stores provider keys for
-Agents, class-prompted annotation, and paid image generation. Only the workspace owner can create, view, or revoke
-keys — a workspace key acts as the owner. See [API Keys](api-keys.md) for full documentation.
+Agents, class-prompted annotation, paid image generation, and Roboflow, Label Studio, and W&B imports. Only the
+workspace owner can view Ultralytics API keys or add, replace, or revoke any key — a workspace key acts as the owner.
+See [API Keys](api-keys.md) for full documentation.
 
 ## Plans Tab
 
 The `Plans` tab lets you compare available plans and upgrade or downgrade your subscription.
 
-![Ultralytics Platform Settings Plans Tab Free Pro Enterprise Comparison](https://cdn.ul.run/i/cad040a8c00329e621ab2d0c0cf53b5f.avif)<!-- screenshot -->
+![Ultralytics Platform Settings Plans Tab Free Pro Enterprise Comparison](https://cdn.ul.run/i/35c3ef00fbda8e1c50216c655530a649.avif)<!-- screenshot -->
 
 {% include "macros/platform-plan-comparison.md" %}
 
@@ -255,9 +268,9 @@ See [Billing](billing.md) for detailed plan information, pricing, and upgrade in
 ## Billing Tab
 
 The `Billing` tab is where you manage credits, payment methods, and review transaction history. Credits pay for
-metered cloud training.
+metered compute: cloud training, batch annotation, and custom-resource endpoint uptime.
 
-![Ultralytics Platform Settings Billing Tab Credit Balance And Plan Card](https://cdn.ul.run/i/9e97863665b58a2b009f700b0df120e9.avif)<!-- screenshot -->
+![Ultralytics Platform Settings Billing Tab Credit Balance And Plan Card](https://cdn.ul.run/i/13a13fe33434819e8a484f49030883a7.avif)<!-- screenshot -->
 
 From this tab you can:
 
@@ -294,7 +307,7 @@ The `Usage` tab charts credit spend and storage for the active workspace.
 - **Date range**: any custom range, defaulting to the last 30 days
 - **Storage card**: the same storage breakdown shown on the **Home** page (see [Storage Usage](#storage-usage))
 
-Grouping by user or API key makes it easy to see which team member or automation is consuming a shared team balance.
+Grouping by user or API key shows which team member or automation is consuming a shared team balance.
 
 ## Referrals Tab
 
@@ -320,7 +333,7 @@ The `Teams` tab lets you manage workspace members, roles, and invitations. Membe
 [Pro and Enterprise plans](billing.md#plans) — on the Free plan the tab shows the roles reference and an
 **Upgrade to Pro** button instead of an invite control.
 
-![Ultralytics Platform Teams Member List With Roles](https://cdn.ul.run/i/5f238fe52109870671d17728d8f3ca94.avif)<!-- screenshot -->
+![Ultralytics Platform Teams Member List With Roles](https://cdn.ul.run/i/ea2bf2f23ea18d16f7ca3bd79556572a.avif)<!-- screenshot -->
 
 The member card header shows the workspace name, plan badge, your own role, and a seat summary such as
 `3 of 5 seats used · 2 available (includes 1 pending invite)`.
@@ -379,11 +392,12 @@ active workspace.
 
 **Imports**
 
+- **Weights & Biases** — select W&B projects and [import their YOLO checkpoints](../integrations/weights-biases.md) using a W&B API key.
 - **Roboflow** — preview and import annotated datasets from a [Roboflow](../integrations/roboflow.md) workspace using a Roboflow API key.
 - **Labelbox** — upload a [Labelbox](../integrations/labelbox.md) NDJSON export directly, with no key to connect.
 - **LabelMe** — upload a zipped folder of LabelMe JSON annotations and their images directly, with no conversion or key. See the [LabelMe guide](../integrations/labelme.md).
 - **CVAT** — marked **Coming Soon**; upload a CVAT Ultralytics YOLO export today. See [CVAT](../integrations/cvat.md).
-- **Label Studio** — marked **Coming Soon**; upload a Label Studio "YOLO with Images" export today. See [Label Studio](../integrations/label-studio.md).
+- **Label Studio** — preview and import projects from hosted [Label Studio](../integrations/label-studio.md) using an access token that the workspace owner connects.
 
 !!! note "Cloud Storage Requires a Paid Plan"
 

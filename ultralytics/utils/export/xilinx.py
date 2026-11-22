@@ -9,8 +9,8 @@ import shutil
 import sysconfig
 from pathlib import Path
 
-from ultralytics.utils import LOGGER
-from ultralytics.utils.checks import check_requirements
+from ultralytics.utils import IS_DEBIAN, IS_UBUNTU, LOGGER
+from ultralytics.utils.checks import ONNXRUNTIME_BUILDS, check_apt_requirements, check_requirements
 
 
 def onnx2xilinx(
@@ -30,7 +30,7 @@ def onnx2xilinx(
     ONNX Runtime Vitis AI Execution Provider compiles them to a `.rai` model in the same directory on first load.
 
     Args:
-        onnx_file (str | Path): Path to the source FP32 ONNX model, deleted after quantization.
+        onnx_file (str | Path): Path to the source FP32 ONNX model, deleted even if quantization fails.
         output_dir (str | Path): Directory to save the exported AMD Xilinx model.
         dataset (DataLoader): Calibration dataloader (from `Exporter.get_int8_calibration_dataloader`).
         transform_fn (Callable): Preprocessing transform (`Exporter._transform_fn`) converting a calibration batch to a
@@ -42,7 +42,9 @@ def onnx2xilinx(
         (str): Path to the exported AMD Xilinx model directory.
     """
     # Quark imports onnxruntime but only declares it in its cli extra
-    check_requirements(["amd-quark>=0.13.0,<0.14.0", ("onnxruntime", "onnxruntime-gpu", "onnxruntime-vitisai")])
+    check_requirements(["amd-quark>=0.13.0,<0.14.0", ONNXRUNTIME_BUILDS])
+    if not shutil.which("c++") and (IS_UBUNTU or IS_DEBIAN):  # Quark JIT-compiles its custom ops with the C++ compiler
+        check_apt_requirements(["g++"])
     import onnx
 
     from ultralytics.utils.export.onnx import onnx_calibration_reader
@@ -75,7 +77,7 @@ def onnx2xilinx(
         )
     finally:
         os.environ["PATH"] = path
-    onnx_file.unlink()
+        onnx_file.unlink()
 
     vaiml = {"device": name, "keep_outputs": True, "optimize_level": 2, "threshold_gops_percent": 20}
     vitis_config = {

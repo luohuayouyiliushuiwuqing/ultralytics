@@ -132,7 +132,7 @@ def autocast(enabled: bool | torch.dtype, device: str = "cuda"):
         ...     pass
 
     Notes:
-        Uses `torch.amp.autocast` on torch>=1.13 and the backend-specific AMP context on older releases.
+        Uses `torch.autocast` on torch>=1.10 and the backend-specific AMP context on older releases.
     """
     dtype = enabled if isinstance(enabled, torch.dtype) else None
     enabled = bool(enabled)
@@ -152,10 +152,10 @@ def autocast(enabled: bool | torch.dtype, device: str = "cuda"):
         import torch_npu
 
         return torch_npu.npu.amp.autocast(enabled=enabled, **kwargs)
-    if TORCH_1_13:
+    if TORCH_1_10:
         if device == "mps" and not TORCH_2_5:  # MPS autocast added in torch 2.5.0, errors on older versions
             device, enabled = "cpu", False
-        return torch.amp.autocast(device, enabled=enabled, **kwargs)
+        return torch.autocast(device, enabled=enabled, **kwargs)
     else:
         return torch.cuda.amp.autocast(enabled and device == "cuda")
 
@@ -201,8 +201,6 @@ def parse_device(device: str | int | list | tuple | torch.device = "") -> str:
     if isinstance(device, torch.device):
         if device.type == "cuda" and device.index is None:
             return ""  # indexless torch.device('cuda') means the current CUDA device, i.e. the '' default request
-        if device.type == "cpu":
-            return "cpu"  # an indexed torch.device('cpu', 0) is the same cpu
         if device.type in {"npu", "xpu"}:
             return device.type if device.index is None else f"{device.type}:{device.index}"
     device = str(device).lower()
@@ -210,6 +208,8 @@ def parse_device(device: str | int | list | tuple | torch.device = "") -> str:
         device = device.replace(remove, "")  # to string, 'cuda:0' -> '0' and '(0, 1)' -> '0,1'
     if device == "cuda":
         device = "0"
+    elif device.startswith("cpu:") and device[4:].isdigit():
+        device = "cpu"  # an indexed 'cpu:0' or torch.device('cpu', 0) is the same cpu
     for backend in ("npu", "xpu"):
         if device.startswith(backend):
             indices = device[len(backend) :].lstrip(":").replace(f"{backend}:", "")
@@ -256,8 +256,8 @@ def select_device(device="", newline=False, verbose=True):
         verbose (bool, optional): If True, logs the device information.
 
     Returns:
-        (torch.device | str): Selected device. For multi-GPU requests this is the first GPU. 'tpu', 'intel', and
-            'vulkan' device strings and other non-cpu/cuda/npu/xpu torch.device inputs are returned unchanged.
+        (torch.device | str): Selected device. For multi-GPU requests this is the first GPU. 'tpu' and 'vulkan' device
+            strings and other non-cpu/cuda/npu/xpu torch.device inputs are returned unchanged.
 
     Raises:
         ValueError: If the requested CUDA, NPU, or XPU device(s) are invalid or unavailable.
@@ -279,7 +279,7 @@ def select_device(device="", newline=False, verbose=True):
     if isinstance(device, torch.device):
         if device.type not in {"cpu", "cuda", "npu", "xpu"}:
             return device  # other torch.device inputs pass through; cpu and accelerator inputs canonicalize below
-    elif str(device).startswith(("tpu", "intel", "vulkan")):
+    elif str(device).startswith(("tpu", "vulkan")):
         return device
 
     s = f"Ultralytics {__version__} 🚀 Python-{PYTHON_VERSION} torch-{TORCH_VERSION} "
@@ -814,6 +814,29 @@ def unset_deterministic():
     os.environ.pop("PYTHONHASHSEED", None)
 
 
+def interpolate_bilinear(x, size=None, scale_factor=None, align_corners=False):
+    """Bilinearly resize a 4D tensor, as matmuls where deterministic mode makes torch decompose the native kernel.
+
+    Args:
+        x (torch.Tensor): Input tensor of shape (B, C, H, W).
+        size (tuple[int, int], optional): Output (H, W).
+        scale_factor (float, optional): Spatial multiplier, used when size is None.
+        align_corners (bool): Align the corner pixels of input and output.
+
+    Returns:
+        (torch.Tensor): Resized tensor.
+    """
+    decomposed = TORCH_2_9 or (TORCH_2_1 and x.device.type == "cuda") or (TORCH_2_5 and x.device.type == "xpu")
+    if x.device.type == "cpu" or not decomposed or not torch.are_deterministic_algorithms_enabled():
+        return F.interpolate(x, size, scale_factor, "bilinear", align_corners)
+    with autocast(False, x.device.type):  # keep the input dtype, as the native kernel does
+        h, w = (  # per-axis weights from the native 1D linear kernel, which deterministic mode keeps native
+            F.interpolate(torch.eye(n, device=x.device, dtype=x.dtype)[None], s, scale_factor, "linear", align_corners)
+            for n, s in zip(x.shape[-2:], size or (None, None))
+        )
+        return h[0].T @ x @ w[0]
+
+
 class ModelEMA:
     """Updated Exponential Moving Average (EMA) implementation.
 
@@ -1026,7 +1049,7 @@ def profile_ops(input, ops, n=10, device=None, max_num_obj=0):
 
     Returns:
         (list): Profile results for each input and operation pair, each either a list of [parameters, GFLOPs, memory
-            (GB), forward time (ms), backward time (ms), input shape, output shape] or None if profiling failed.
+            (GiB), forward time (ms), backward time (ms), input shape, output shape] or None if profiling failed.
 
     Examples:
         >>> from ultralytics.utils.torch_utils import profile_ops
@@ -1043,7 +1066,7 @@ def profile_ops(input, ops, n=10, device=None, max_num_obj=0):
     results = []
     device = select_device(device, verbose=False)
     LOGGER.info(
-        f"{'Params':>12s}{'GFLOPs':>12s}{'GPU_mem (GB)':>14s}{'forward (ms)':>14s}{'backward (ms)':>14s}"
+        f"{'Params':>12s}{'GFLOPs':>12s}{'GPU_mem (GiB)':>14s}{'forward (ms)':>14s}{'backward (ms)':>14s}"
         f"{'input':>24s}{'output':>24s}"
     )
     gc.collect()  # attempt to free unused memory
@@ -1058,38 +1081,28 @@ def profile_ops(input, ops, n=10, device=None, max_num_obj=0):
             m = m.half() if hasattr(m, "half") and isinstance(x, torch.Tensor) and x.dtype is torch.float16 else m
             tf, tb, t = 0, 0, [0, 0, 0]  # dt forward, backward
             try:
-                flops = thop.profile(m, inputs=[x], verbose=False)[0] / 1e9 * 2 if thop else 0  # GFLOPs
-            except Exception:
-                flops = 0
-
-            try:
                 mem = 0
                 for _ in range(n):
                     with cuda_memory_usage(device) as cuda_info:
                         t[0] = time_sync(device)
                         y = m(x)
                         t[1] = time_sync(device)
-                        try:
-                            sum(yi.sum() for yi in tree_flatten(y)[0] if isinstance(yi, torch.Tensor)).backward()
-                            t[2] = time_sync(device)
-                        except Exception:  # no backward method
-                            # print(e)  # for debug
-                            t[2] = float("nan")
-                    mem += cuda_info["memory"] / 1e9  # (GB)
+                        sum(yi.sum() for yi in tree_flatten(y)[0] if isinstance(yi, torch.Tensor)).backward()
+                        t[2] = time_sync(device)
+                    mem = cuda_info["memory"] / 2**30  # (GiB)
                     tf += (t[1] - t[0]) * 1000 / n  # ms per op forward
                     tb += (t[2] - t[1]) * 1000 / n  # ms per op backward
-                    if max_num_obj:  # simulate training with predictions per image grid (for AutoBatch)
-                        with cuda_memory_usage(device) as cuda_info:
-                            anchors = int(sum((x.shape[-1] / s) * (x.shape[-2] / s) for s in m.stride.tolist()))
-                            # Conservative detect-loss envelope: ~6 fp32-equivalents each for TaskAlignedAssigner
-                            # metric/top-k state and the cls path (pred/target + two op temps of unreduced BCE:
-                            # ~4 in pure fp32, ~6 under AMP where autocast upcasts both BCE inputs to fp32 copies)
-                            sim = (
-                                torch.randn(x.shape[0], 6 * max_num_obj, anchors, device=device, dtype=torch.float32),
-                                torch.randn(x.shape[0], anchors, 6 * len(m.names), device=device, dtype=torch.float32),
-                            )
-                        del sim
-                        mem += cuda_info["memory"] / 1e9  # (GB)
+                    if max_num_obj and accelerator is not None:  # simulate training loss memory (for AutoBatch)
+                        anchors = int(sum((x.shape[-1] / s) * (x.shape[-2] / s) for s in m.stride.tolist()))
+                        # Conservative detect-loss envelope: ~6 fp32-equivalents each for TaskAlignedAssigner
+                        # metric/top-k state and the cls path (pred/target + two op temps of unreduced BCE:
+                        # ~4 in pure fp32, ~6 under AMP where autocast upcasts both BCE inputs to fp32 copies)
+                        # cls path doubled: training-time validation runs the loss at up to 2x batch
+                        mem += x.shape[0] * anchors * 6 * (max_num_obj + 2 * len(m.names)) * 4 / 2**30  # (GiB)
+                try:
+                    flops = thop.profile(m, inputs=[x], verbose=False)[0] / 1e9 * 2 if thop else 0  # GFLOPs
+                except Exception:
+                    flops = 0
                 s_in, s_out = (tuple(x.shape) if isinstance(x, torch.Tensor) else "list" for x in (x, y))  # shapes
                 p = sum(x.numel() for x in m.parameters()) if isinstance(m, nn.Module) else 0  # parameters
                 LOGGER.info(f"{p:12}{flops:12.4g}{mem:>14.3f}{tf:14.4g}{tb:14.4g}{s_in!s:>24s}{s_out!s:>24s}")

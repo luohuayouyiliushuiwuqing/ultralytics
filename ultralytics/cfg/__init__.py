@@ -52,6 +52,7 @@ SOLUTION_MAP = {
     "region": "RegionCounter",
     "security": "SecurityAlarm",
     "parking": "ParkingManagement",
+    "ocr": "OCR",
     "help": None,
 }
 
@@ -247,6 +248,7 @@ CFG_FRACTION_KEYS = frozenset(
         "fraction",
         "multi_scale",
         "dlam",
+        "tile_overlap",
     }
 )
 CFG_INT_KEYS = frozenset(
@@ -509,6 +511,10 @@ def check_cfg(cfg: dict, hard: bool = True) -> None:
                 if hard:
                     raise TypeError(f"'{k}={v}' is of invalid type {type(v).__name__}. '{k}' must be a str.")
                 cfg[k] = str(v)
+            elif k == "tile" and not isinstance(v, bool):
+                s = [v, v] if isinstance(v, int) else v
+                if not (isinstance(s, (list, tuple)) and len(s) == 2 and all(isinstance(x, int) and x > 0 for x in s)):
+                    raise ValueError(f"'{k}={v}' is invalid. Valid '{k}' values are False, True, an int or [h, w] > 0.")
             elif k == "compile" and not isinstance(v, (bool, str)):  # False=off, True="default", or a mode string
                 if hard:
                     raise TypeError(
@@ -619,6 +625,12 @@ def _handle_deprecation(custom: dict) -> dict:
         half_on = half is not None and str(half).strip().lower() not in {"none", "false", "0"}
         custom["quantize"] = 8 if int8_on else 16 if half_on else None  # False/0 clears precision back to FP32
         deprecation_warn("int8" if int8 is not None else "half", "quantize")
+
+    device = str(custom.get("device"))
+    if device.lower().startswith("intel:"):  # OpenVINO and LiteRT take PyTorch device names, 'xpu' is the Intel GPU
+        name = device[6:].lower()
+        custom["device"] = None if name == "auto" else name.replace("gpu", "xpu").replace(".", ":")
+        deprecation_warn(f"device={device}", f"device={custom['device']}")
 
     for old_key, (new_key, transform) in deprecated_mappings.items():
         if old_key not in custom:
@@ -907,11 +919,13 @@ def handle_yolo_solutions(args: list[str]) -> None:
         cap = cv2.VideoCapture(solution.CFG["source"])  # read the video file
         if solution_name != "crop":
             # extract width, height and fps of the video file, create save directory and initialize video writer
-            w, h, fps = (
-                round(cap.get(x)) for x in (cv2.CAP_PROP_FRAME_WIDTH, cv2.CAP_PROP_FRAME_HEIGHT, cv2.CAP_PROP_FPS)
-            )
-            if solution_name == "analytics":  # analytical graphs follow fixed shape for output i.e w=1280, h=720
-                w, h = 1280, 720
+            w, h = (round(cap.get(x)) for x in (cv2.CAP_PROP_FRAME_WIDTH, cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            fps = fps if 0 < fps < 1000 else 30  # 30 FPS fallback for 0, nan and 90 kHz RTP clock rates
+            if solution_name == "speed" and "fps" not in overrides:
+                solution.fps = fps
+            if solution_name == "analytics":  # output frames are the chart canvas, not the source video
+                w, h = solution.canvas.get_width_height()
             save_dir = get_save_dir(SimpleNamespace(task="solutions", name="exp", exist_ok=False, project=None))
             save_dir.mkdir(parents=True, exist_ok=True)  # create the output directory i.e. runs/solutions/exp
             vw = cv2.VideoWriter(str(save_dir / f"{solution_name}.avi"), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
@@ -1153,10 +1167,10 @@ def entrypoint(debug: str = "") -> None:
 
         model = NAS(model)
     else:
-        from ultralytics import YOLO
+        from ultralytics import YOLO, YOLOE, YOLOWorld
 
         model = YOLO(model, task=task)
-        if "yoloe" in stem or "world" in stem:
+        if isinstance(model, (YOLOE, YOLOWorld)):
             cls_list = overrides.get("classes", DEFAULT_CFG.classes)
             if isinstance(cls_list, str):  # text prompts, i.e. "person, bus" -> ['person', 'bus']
                 model.set_classes([c.strip() for c in overrides.pop("classes", cls_list).split(",")])
@@ -1179,10 +1193,9 @@ def entrypoint(debug: str = "") -> None:
         if overrides.get("data") is None and not overrides.get("resume"):
             overrides["data"] = DEFAULT_CFG.data or TASK2DATA.get(task or DEFAULT_CFG.task, DEFAULT_CFG.data)
             LOGGER.warning(f"'data' argument is missing. Using default 'data={overrides['data']}'.")
-    elif mode == "export":
-        if "format" not in overrides:
-            overrides["format"] = DEFAULT_CFG.format or "torchscript"
-            LOGGER.warning(f"'format' argument is missing. Using default 'format={overrides['format']}'.")
+    elif mode == "export" and "format" not in overrides:
+        overrides["format"] = DEFAULT_CFG.format or "torchscript"
+        LOGGER.warning(f"'format' argument is missing. Using default 'format={overrides['format']}'.")
 
     # Run command in python
     getattr(model, mode)(**overrides)  # default args from model
